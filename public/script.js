@@ -694,10 +694,10 @@ function loadSavedTheme() {
   const savedTheme = localStorage.getItem("theme");
   if (savedTheme === "light") {
     document.body.classList.remove("dark-mode");
-    themeToggle.querySelector(".theme-icon").textContent = "☀️";
+    themeToggle.querySelector(".theme-icon").textContent = "🌙";
   } else {
     document.body.classList.add("dark-mode");
-    themeToggle.querySelector(".theme-icon").textContent = "🌙";
+    themeToggle.querySelector(".theme-icon").textContent = "☀️";
   }
 }
 

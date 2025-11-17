@@ -5,8 +5,8 @@
 }
 
 :root {
-  --primary-color: #3b82f6;
-  --primary-dark: #2563eb;
+  --primary-color: #ff8f00;
+  --primary-dark: #ff6f00;
   --secondary-color: #64748b;
   --success-color: #10b981;
   --warning-color: #f59e0b;
@@ -23,13 +23,13 @@
 
 /* Dark Mode Variables */
 .dark-mode {
-  --primary-color: #60a5fa;
-  --primary-dark: #3b82f6;
+  --primary-color: #d48700;
+  --primary-dark: #ff8f00;
   --secondary-color: #94a3b8;
   --success-color: #34d399;
   --warning-color: #fbbf24;
   --error-color: #f87171;
-  --background-color: #0f172a;
+  --background-color: #141d33;
   --surface-color: #1e293b;
   --text-primary: #f1f5f9;
   --text-secondary: #cbd5e1;
@@ -41,7 +41,7 @@ body {
   font-family: "Inter", sans-serif;
   line-height: 1.6;
   color: var(--text-primary);
-  background: linear-gradient(135deg, #1e3a8a 0%, #0f172a 100%);
+  background: linear-gradient(135deg, #0e1c44 0%, #0f172a 100%);
   min-height: 100vh;
   padding: 20px;
   transition: all 0.3s ease;
@@ -59,14 +59,13 @@ body {
   box-shadow: var(--shadow);
   overflow: hidden;
   transition: all 0.3s ease;
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100vh - 40px);
 }
 
 .header {
-  background: linear-gradient(
-    135deg,
-    var(--primary-color),
-    var(--primary-dark)
-  );
+  background: linear-gradient(135deg, #ffa915, #d37802);
   color: white;
   padding: 40px 30px;
   text-align: center;
@@ -113,6 +112,7 @@ body {
 
 .main {
   padding: 40px 30px;
+  flex: 1;
 }
 
 .search-section {
@@ -140,7 +140,7 @@ input {
 input:focus {
   outline: none;
   border-color: var(--primary-color);
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+  box-shadow: 0 0 0 3px rgba(255, 143, 0, 0.1);
 }
 
 input::placeholder {
@@ -290,17 +290,19 @@ input::placeholder {
   gap: 10px;
 }
 
+/* CORREÇÃO DO ALINHAMENTO - INFO GRID MELHORADO */
 .info-grid {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 20px;
+  gap: 16px;
 }
 
 .info-item {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 15px 0;
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  gap: 16px;
+  align-items: start;
+  padding: 12px 0;
   border-bottom: 1px solid var(--border-color);
 }
 
@@ -308,26 +310,32 @@ input::placeholder {
   border-bottom: none;
 }
 
+.info-item.full-width {
+  grid-template-columns: 1fr;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .label {
   font-weight: 600;
   color: var(--text-primary);
-  font-size: 14px;
+  font-size: 13px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
+  line-height: 1.4;
+  min-width: 140px;
 }
 
 .value {
   color: var(--text-secondary);
   line-height: 1.5;
+  word-break: break-word;
 }
 
 .status-active {
   color: var(--success-color);
   font-weight: 600;
-}
-
-.full-width {
-  grid-column: 1 / -1;
 }
 
 .partners-list {
@@ -362,6 +370,7 @@ input::placeholder {
   margin-bottom: 4px;
 }
 
+/* FOOTER SIMPLIFICADO */
 .footer {
   text-align: center;
   padding: 25px;
@@ -369,24 +378,42 @@ input::placeholder {
   color: var(--text-secondary);
   font-size: 14px;
   border-top: 1px solid var(--border-color);
+  margin-top: auto;
+}
+
+.footer p {
+  margin-bottom: 10px;
+  line-height: 1.5;
+}
+
+.footer-links {
+  display: flex;
+  justify-content: center;
+  gap: 20px;
+  margin-top: 15px;
+}
+
+.footer-link {
+  color: var(--primary-color);
+  text-decoration: none;
+  transition: all 0.3s ease;
+  font-weight: 500;
+}
+
+.footer-link:hover {
+  color: var(--primary-dark);
+  text-decoration: underline;
 }
 
 /* Responsividade */
 @media (min-width: 768px) {
   .info-grid {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr;
   }
 
   .info-item {
-    flex-direction: row;
-    justify-content: space-between;
-    align-items: flex-start;
-    padding: 12px 0;
-  }
-
-  .label {
-    min-width: 140px;
-    font-size: 13px;
+    grid-template-columns: 180px 1fr;
+    gap: 20px;
   }
 
   .partners-list {
@@ -446,5 +473,19 @@ input::placeholder {
 
   .tab-button.active {
     border-bottom: 2px solid var(--primary-color);
+  }
+
+  .info-item {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .label {
+    min-width: auto;
+  }
+
+  .footer-links {
+    flex-direction: column;
+    gap: 8px;
   }
 }
