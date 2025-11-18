@@ -1,6 +1,6 @@
 {
   "name": "consulta-cnpj",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Sistema de consulta de CNPJ com interface moderna e acessível",
   "type": "module",
   "author": "Romulo Garcia",
@@ -12,23 +12,39 @@
     "cnpj",
     "consulta",
     "api",
-    "empresas"
+    "empresas",
+    "brasil"
   ],
   "scripts": {
     "dev": "vercel dev",
     "build": "vercel build",
     "start": "vercel start",
     "lint": "eslint . --ext .js",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage"
   },
   "dependencies": {
     "@vercel/node": "^2.0.0"
   },
   "devDependencies": {
     "eslint": "^8.0.0",
-    "prettier": "^3.0.0"
+    "prettier": "^3.0.0",
+    "jest": "^29.0.0",
+    "@types/jest": "^29.0.0"
   },
   "engines": {
     "node": ">=18.x"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "collectCoverageFrom": [
+      "**/*.js",
+      "!**/node_modules/**",
+      "!**/coverage/**"
+    ],
+    "coverageDirectory": "coverage",
+    "verbose": true
   }
 }

@@ -3,17 +3,19 @@
 // =============================================
 const SECURITY_CONFIG = {
   MAX_REQUESTS_PER_MINUTE: 10,
+  MAX_REQUESTS_PER_CNPJ_PER_MINUTE: 3,
   TIMEOUT_MS: 10000,
-  ALLOWED_ORIGINS: ['*'], // Em produção, especificar domínios
-  CACHE_TTL: 5 * 60 * 1000, // 5 minutos
+  ALLOWED_ORIGINS: ['*'],
+  CACHE_TTL: 5 * 60 * 1000,
+  MAX_CACHE_SIZE: 1000,
 };
 
-// Cache simples em memória
+// Cache com limite de tamanho
 const requestCache = new Map();
 const rateLimitMap = new Map();
 
 // =============================================
-// MIDDLEWARES DE SEGURANÇA
+// MIDDLEWARES DE SEGURANÇA APRIMORADOS
 // =============================================
 class SecurityMiddleware {
   static validateOrigin(req, res) {
@@ -27,9 +29,9 @@ class SecurityMiddleware {
     return true;
   }
 
-  static checkRateLimit(ip) {
+  static checkRateLimit(ip, cnpj) {
     const now = Date.now();
-    const windowStart = now - 60000; // 1 minuto
+    const windowStart = now - 60000;
     
     // Limpar entradas antigas
     for (const [key, timestamp] of rateLimitMap.entries()) {
@@ -38,15 +40,30 @@ class SecurityMiddleware {
       }
     }
 
-    const requestCount = Array.from(rateLimitMap.entries())
-      .filter(([key, timestamp]) => key.startsWith(ip) && timestamp > windowStart)
-      .length;
+    // Rate limit por IP
+    const ipRequests = Array.from(rateLimitMap.entries())
+      .filter(([key, timestamp]) => 
+        key.startsWith(`ip-${ip}`) && timestamp > windowStart
+      ).length;
 
-    if (requestCount >= SECURITY_CONFIG.MAX_REQUESTS_PER_MINUTE) {
+    if (ipRequests >= SECURITY_CONFIG.MAX_REQUESTS_PER_MINUTE) {
       return false;
     }
 
-    rateLimitMap.set(`${ip}-${now}`, now);
+    // Rate limit por CNPJ (prevenir abuso de consultas repetidas)
+    const cnpjRequests = Array.from(rateLimitMap.entries())
+      .filter(([key, timestamp]) => 
+        key.startsWith(`cnpj-${cnpj}`) && timestamp > windowStart
+      ).length;
+
+    if (cnpjRequests >= SECURITY_CONFIG.MAX_REQUESTS_PER_CNPJ_PER_MINUTE) {
+      return false;
+    }
+
+    // Registrar ambas as chaves
+    rateLimitMap.set(`ip-${ip}-${now}`, now);
+    rateLimitMap.set(`cnpj-${cnpj}-${now}`, now);
+    
     return true;
   }
 
@@ -59,14 +76,12 @@ class SecurityMiddleware {
 
   static sanitizeCNPJ(cnpj) {
     if (typeof cnpj !== 'string') return '';
-    
-    // Remove caracteres não numéricos e limita a 14 dígitos
     return cnpj.replace(/\D/g, '').substring(0, 14);
   }
 }
 
 // =============================================
-// GERENCIADOR DE CACHE
+// GERENCIADOR DE CACHE COM LIMITE DE TAMANHO
 // =============================================
 class CacheManager {
   static get(cnpj) {
@@ -76,7 +91,6 @@ class CacheManager {
       return entry.data;
     }
     
-    // Remove entrada expirada
     if (entry) {
       requestCache.delete(cnpj);
     }
@@ -85,6 +99,12 @@ class CacheManager {
   }
 
   static set(cnpj, data) {
+    // Verificar e aplicar limite de tamanho
+    if (requestCache.size >= SECURITY_CONFIG.MAX_CACHE_SIZE) {
+      const firstKey = requestCache.keys().next().value;
+      requestCache.delete(firstKey);
+    }
+    
     requestCache.set(cnpj, {
       data,
       timestamp: Date.now()
@@ -93,6 +113,47 @@ class CacheManager {
 
   static clear() {
     requestCache.clear();
+  }
+
+  static getSize() {
+    return requestCache.size;
+  }
+}
+
+// =============================================
+// LOGGER ESTRUTURADO
+// =============================================
+class Logger {
+  static info(message, meta = {}) {
+    console.log(JSON.stringify({
+      timestamp: new Date().toISOString(),
+      level: 'INFO',
+      message,
+      ...meta
+    }));
+  }
+  
+  static error(message, error = null, meta = {}) {
+    console.error(JSON.stringify({
+      timestamp: new Date().toISOString(),
+      level: 'ERROR',
+      message,
+      error: error ? {
+        name: error.name,
+        message: error.message,
+        stack: error.stack
+      } : null,
+      ...meta
+    }));
+  }
+
+  static warn(message, meta = {}) {
+    console.warn(JSON.stringify({
+      timestamp: new Date().toISOString(),
+      level: 'WARN',
+      message,
+      ...meta
+    }));
   }
 }
 
@@ -107,12 +168,10 @@ class CNPJValidatorServer {
       return { isValid: false, error: 'CNPJ deve conter 14 dígitos' };
     }
 
-    // CNPJs com dígitos repetidos são inválidos
     if (/^(\d)\1+$/.test(cleaned)) {
       return { isValid: false, error: 'CNPJ inválido' };
     }
 
-    // Validação dos dígitos verificadores
     let tamanho = cleaned.length - 2;
     let numeros = cleaned.substring(0, tamanho);
     let digitos = cleaned.substring(tamanho);
@@ -159,7 +218,7 @@ class ExternalAPIClient {
     try {
       const apiUrl = `https://publica.cnpj.ws/cnpj/${cnpj}`;
       
-      console.log('📡 Chamando API externa:', apiUrl);
+      Logger.info('Chamando API externa', { cnpj, apiUrl });
       
       const response = await fetch(apiUrl, {
         method: 'GET',
@@ -178,7 +237,7 @@ class ExternalAPIClient {
       }
 
       const data = await response.json();
-      console.log('✅ Dados recebidos da API externa');
+      Logger.info('Dados recebidos da API externa', { cnpj, dataSize: JSON.stringify(data).length });
       
       return data;
     } catch (error) {
@@ -202,7 +261,6 @@ class DataMapper {
     const simples = apiData.simples || {};
 
     return {
-      // Dados básicos
       taxId: estabelecimento.cnpj || apiData.cnpj_raiz,
       alias: estabelecimento.nome_fantasia || null,
       founded: estabelecimento.data_inicio_atividade,
@@ -213,7 +271,6 @@ class DataMapper {
       statusDate: estabelecimento.data_situacao_cadastral,
       head: estabelecimento.tipo === 'MATRIZ',
 
-      // Dados da empresa
       company: {
         name: apiData.razao_social || null,
         nature: apiData.natureza_juridica ? {
@@ -236,21 +293,12 @@ class DataMapper {
         members: this.mapMembers(apiData.socios),
       },
 
-      // Endereço
       address: this.mapAddress(estabelecimento),
-
-      // Contatos
       phones: this.mapPhones(estabelecimento),
       emails: this.mapEmails(estabelecimento),
-
-      // Atividades econômicas
       mainActivity: this.mapActivity(estabelecimento.atividade_principal),
       sideActivities: this.mapActivities(estabelecimento.atividades_secundarias),
-
-      // Inscrições estaduais
       registrations: this.mapRegistrations(estabelecimento.inscricoes_estaduais),
-
-      // SUFRAMA - não disponível na API pública
       suframa: [],
     };
   }
@@ -267,7 +315,7 @@ class DataMapper {
           .trim()
       ) || 0;
     } catch (error) {
-      console.warn('Erro ao parsear valor monetário:', value, error);
+      Logger.warn('Erro ao parsear valor monetário', { value, error: error.message });
       return 0;
     }
   }
@@ -284,7 +332,7 @@ class DataMapper {
         text: socio.qualificacao_socio?.descricao || socio.tipo || 'Sócio',
       },
       since: socio.data_entrada,
-    })).filter(member => member.person.name); // Remove sócios sem nome
+    })).filter(member => member.person.name);
   }
 
   static mapAddress(estabelecimento) {
@@ -373,26 +421,24 @@ class DataMapper {
 // HANDLER PRINCIPAL
 // =============================================
 export default async function handler(req, res) {
-  // Configurar headers de segurança
+  const startTime = Date.now();
+  
+  // Headers de segurança
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
   res.setHeader('Access-Control-Max-Age', '86400');
-  
-  // Headers de segurança adicionais
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('X-XSS-Protection', '1; mode=block');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
 
-  // Lidar com preflight OPTIONS request
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
 
-  // Verificar método HTTP
   if (req.method !== 'GET') {
-    console.warn('❌ Método não permitido:', req.method);
+    Logger.warn('Método não permitido', { method: req.method });
     return res.status(405).json({
       error: true,
       message: 'Método não permitido',
@@ -400,20 +446,9 @@ export default async function handler(req, res) {
   }
 
   try {
-    // Verificar rate limiting
     const clientIP = SecurityMiddleware.getClientIP(req);
-    
-    if (!SecurityMiddleware.checkRateLimit(clientIP)) {
-      console.warn('🚫 Rate limit excedido para IP:', clientIP);
-      return res.status(429).json({
-        error: true,
-        message: 'Limite de requisições excedido. Tente novamente em 1 minuto.',
-      });
-    }
-
     const { cnpj } = req.query;
 
-    // Validar parâmetro CNPJ
     if (!cnpj) {
       return res.status(400).json({
         error: true,
@@ -421,8 +456,16 @@ export default async function handler(req, res) {
       });
     }
 
-    // Sanitizar e validar CNPJ
     const sanitizedCNPJ = SecurityMiddleware.sanitizeCNPJ(cnpj);
+    
+    if (!SecurityMiddleware.checkRateLimit(clientIP, sanitizedCNPJ)) {
+      Logger.warn('Rate limit excedido', { ip: clientIP, cnpj: sanitizedCNPJ });
+      return res.status(429).json({
+        error: true,
+        message: 'Limite de requisições excedido. Tente novamente em 1 minuto.',
+      });
+    }
+
     const validation = CNPJValidatorServer.validate(sanitizedCNPJ);
 
     if (!validation.isValid) {
@@ -432,12 +475,11 @@ export default async function handler(req, res) {
       });
     }
 
-    console.log('🔍 Consultando CNPJ:', validation.cleaned);
+    Logger.info('Consultando CNPJ', { cnpj: validation.cleaned, ip: clientIP });
 
-    // Verificar cache
     const cachedData = CacheManager.get(validation.cleaned);
     if (cachedData) {
-      console.log('⚡ Retornando dados do cache');
+      Logger.info('Retornando dados do cache', { cnpj: validation.cleaned });
       return res.status(200).json({
         error: false,
         data: cachedData,
@@ -445,21 +487,22 @@ export default async function handler(req, res) {
       });
     }
 
-    // Fazer requisição para API externa
     const apiData = await ExternalAPIClient.fetchCNPJData(validation.cleaned);
-
-    // Mapear dados para estrutura do frontend
     const mappedData = DataMapper.mapToFrontendStructure(apiData);
 
-    // Validar dados mapeados
     if (!mappedData.taxId) {
       throw new Error('Dados inválidos retornados pela API');
     }
 
-    // Armazenar em cache
     CacheManager.set(validation.cleaned, mappedData);
 
-    // Retornar resposta
+    const duration = Date.now() - startTime;
+    Logger.info('Consulta finalizada com sucesso', { 
+      cnpj: validation.cleaned, 
+      duration,
+      cacheSize: CacheManager.getSize()
+    });
+
     return res.status(200).json({
       error: false,
       data: mappedData,
@@ -467,9 +510,9 @@ export default async function handler(req, res) {
     });
 
   } catch (error) {
-    console.error('💥 Erro no handler:', error);
+    const duration = Date.now() - startTime;
+    Logger.error('Erro no handler', error, { duration });
 
-    // Tratamento específico de erros
     let statusCode = 500;
     let errorMessage = 'Erro interno do servidor';
 
@@ -495,22 +538,28 @@ export default async function handler(req, res) {
   }
 }
 
-// Limpar cache periodicamente (em produção)
+// Limpeza periódica do cache
 if (typeof setInterval !== 'undefined') {
   setInterval(() => {
     const now = Date.now();
+    let cleanedCount = 0;
+    
     for (const [cnpj, entry] of requestCache.entries()) {
       if (now - entry.timestamp > SECURITY_CONFIG.CACHE_TTL) {
         requestCache.delete(cnpj);
+        cleanedCount++;
       }
     }
     
-    // Limpar rate limit map
     const windowStart = Date.now() - 60000;
     for (const [key, timestamp] of rateLimitMap.entries()) {
       if (timestamp < windowStart) {
         rateLimitMap.delete(key);
       }
     }
-  }, 60000); // A cada minuto
+
+    if (cleanedCount > 0) {
+      Logger.info('Limpeza periódica do cache', { cleanedCount });
+    }
+  }, 60000);
 }

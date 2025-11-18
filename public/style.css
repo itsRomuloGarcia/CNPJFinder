@@ -7,7 +7,7 @@
 
 :root {
   /* Cores Primárias */
-  --primary-color: #c57001;
+  --primary-color: #b86800;
   --primary-dark: #ff6f00;
   --primary-light: #ffb74d;
   --primary-rgb: 197, 112, 1;
@@ -68,8 +68,8 @@
 
 /* Dark Mode Variables */
 .dark-mode {
-  --primary-color: #db8b01;
-  --primary-dark: #ff6f00;
+  --primary-color: #ff821c;
+  --primary-dark: #e26301;
   --primary-light: #ff9800;
   
   --secondary-color: #94a3b8;
@@ -134,7 +134,7 @@ body {
 
 /* Header */
 .header {
-  background: linear-gradient(135deg, #fab43c, #cf7703);
+  background: linear-gradient(135deg, #fab43c, #b46702);
   color: rgba(255, 255, 255, 0.95);
   padding: var(--space-2xl) var(--space-xl);
   text-align: center;
@@ -271,7 +271,7 @@ input:focus::placeholder {
   color: white;
   border: none;
   border-radius: var(--radius-md);
-  font-size: 16px;
+  font-size: 20px;
   font-weight: 600;
   cursor: pointer;
   transition: all var(--transition);
@@ -481,7 +481,7 @@ input:focus::placeholder {
   }
 }
 
-/* Cards - REMOVIDOS EFEITOS HOVER */
+/* Cards */
 .card {
   background: var(--surface-color);
   border-radius: var(--radius-lg);
@@ -489,7 +489,6 @@ input:focus::placeholder {
   padding: var(--space-xl);
   margin-bottom: var(--space-lg);
   border: 1px solid var(--border-color);
-  /* Removida transição e efeitos hover */
 }
 
 .card h2 {
@@ -517,7 +516,6 @@ input:focus::placeholder {
   align-items: start;
   padding: var(--space-md) 0;
   border-bottom: 1px solid var(--border-color);
-  /* Removido efeito hover */
 }
 
 .info-item:last-child {
@@ -569,7 +567,6 @@ input:focus::placeholder {
   background: var(--surface-color);
   border-radius: var(--radius-md);
   border-left: 4px solid var(--primary-color);
-  /* Removida transição e efeitos hover */
   border: 1px solid var(--border-color);
 }
 
@@ -597,6 +594,198 @@ input:focus::placeholder {
   background: var(--surface-hover);
   border-radius: var(--radius);
   border: 1px dashed var(--border-color);
+}
+
+/* ============================================= */
+/* ESTILOS PARA EXPORTAÇÃO */
+/* ============================================= */
+
+.export-controls {
+  margin-bottom: var(--space-xl);
+  padding: var(--space-lg);
+  background: var(--surface-hover);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+}
+
+.export-actions {
+  display: flex;
+  gap: var(--space-md);
+  margin-bottom: var(--space-lg);
+  flex-wrap: wrap;
+}
+
+.export-button {
+  padding: var(--space-md) var(--space-lg);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  background: var(--surface-color);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-weight: 500;
+  transition: all var(--transition);
+  font-family: inherit;
+  font-size: 14px;
+}
+
+.export-button.primary {
+  background: var(--primary-color);
+  color: white;
+  border-color: var(--primary-color);
+}
+
+.export-button.secondary {
+  background: var(--secondary-color);
+  color: white;
+  border-color: var(--secondary-color);
+}
+
+.export-button.danger {
+  background: var(--error-color);
+  color: white;
+  border-color: var(--error-color);
+}
+
+.export-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+
+.export-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.export-stats {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-lg);
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
+.download-actions {
+  display: flex;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+}
+
+.export-list {
+  max-height: 500px;
+  overflow-y: auto;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--surface-color);
+}
+
+.export-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-md);
+  padding: var(--space-lg);
+  border-bottom: 1px solid var(--border-color);
+  transition: background-color var(--transition);
+}
+
+.export-item:last-child {
+  border-bottom: none;
+}
+
+.export-item:hover {
+  background: var(--surface-hover);
+}
+
+.export-checkbox {
+  display: flex;
+  align-items: center;
+  margin-top: 2px;
+}
+
+.export-checkbox input {
+  display: none;
+}
+
+.checkmark {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition);
+  cursor: pointer;
+}
+
+.export-checkbox input:checked + .checkmark {
+  background: var(--primary-color);
+  border-color: var(--primary-color);
+}
+
+.export-checkbox input:checked + .checkmark::after {
+  content: '✓';
+  color: white;
+  font-size: 12px;
+  font-weight: bold;
+}
+
+.export-info {
+  flex: 1;
+}
+
+.export-company {
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: var(--space-xs);
+  font-size: 16px;
+  line-height: 1.4;
+}
+
+.export-cnpj {
+  color: var(--primary-color);
+  font-weight: 500;
+  margin-bottom: var(--space-xs);
+  font-size: 14px;
+}
+
+.export-date {
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+/* Notifications */
+.notification {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  padding: 12px 20px;
+  background: var(--success-color);
+  color: white;
+  border-radius: 8px;
+  z-index: 1000;
+  animation: slideIn 0.3s ease;
+  box-shadow: var(--shadow-md);
+}
+
+.notification-error {
+  background: var(--error-color);
+}
+
+.notification-warning {
+  background: var(--warning-color);
+}
+
+@keyframes slideIn {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
 }
 
 /* Footer */
@@ -691,6 +880,14 @@ input:focus::placeholder {
   .tab-button {
     padding: var(--space-lg) var(--space-xl);
   }
+
+  .export-actions {
+    flex-wrap: nowrap;
+  }
+
+  .download-actions {
+    flex-wrap: nowrap;
+  }
 }
 
 @media (max-width: 767px) {
@@ -776,6 +973,29 @@ input:focus::placeholder {
   .footer {
     padding: var(--space-lg);
   }
+
+  .export-actions {
+    flex-direction: column;
+  }
+
+  .download-actions {
+    flex-direction: column;
+  }
+
+  .export-stats {
+    flex-direction: column;
+    gap: var(--space-sm);
+    align-items: flex-start;
+  }
+
+  .export-item {
+    flex-direction: column;
+    gap: var(--space-md);
+  }
+
+  .export-checkbox {
+    align-self: flex-start;
+  }
 }
 
 @media (max-width: 480px) {
@@ -801,6 +1021,15 @@ input:focus::placeholder {
   
   .partner-item {
     padding: var(--space-md);
+  }
+
+  .export-controls {
+    padding: var(--space-md);
+  }
+
+  .export-button {
+    padding: var(--space-sm) var(--space-md);
+    font-size: 13px;
   }
 }
 
@@ -857,5 +1086,359 @@ input:focus::placeholder {
   body {
     background: white !important;
     color: black !important;
+  }
+}
+
+/* ============================================= */
+/* ESTILOS PARA O SISTEMA DE RATE LIMIT */
+/* ============================================= */
+
+.rate-limit-message {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-md);
+  text-align: left;
+}
+
+.rate-limit-icon {
+  font-size: 1.5rem;
+  flex-shrink: 0;
+}
+
+.rate-limit-content {
+  flex: 1;
+}
+
+.rate-limit-content strong {
+  display: block;
+  color: var(--error-color);
+  margin-bottom: var(--space-xs);
+  font-size: 14px;
+}
+
+.rate-limit-content p {
+  margin-bottom: var(--space-xs);
+  color: var(--text-primary);
+}
+
+.rate-limit-content .timer {
+  font-family: 'Courier New', monospace;
+  font-weight: bold;
+  color: var(--primary-color);
+  background: var(--surface-hover);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 14px;
+}
+
+.rate-limit-content small {
+  color: var(--text-tertiary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+/* Estados do timer */
+.timer-pulse {
+  animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+  0% { opacity: 1; }
+  50% { opacity: 0.7; }
+  100% { opacity: 1; }
+}
+
+/* Responsividade para mensagens de rate limit */
+@media (max-width: 480px) {
+  .rate-limit-message {
+    flex-direction: column;
+    text-align: center;
+    gap: var(--space-sm);
+  }
+  
+  .rate-limit-icon {
+    align-self: center;
+  }
+
+}
+
+/* ============================================= */
+/* ESTILOS PARA O FOOTER ATUALIZADO */
+/* ============================================= */
+
+.footer {
+  background: var(--surface-color);
+  border-top: 1px solid var(--border-color);
+  padding: var(--space-2xl) 0;
+  margin-top: auto;
+}
+
+.footer-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 var(--space-xl);
+}
+
+.footer-content {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--space-2xl);
+}
+
+.footer-info {
+  flex: 1;
+  max-width: 400px;
+}
+
+.footer-brand {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-lg);
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-weight: 700;
+  font-size: 1.25rem;
+  color: var(--primary-color);
+}
+
+.logo svg {
+  color: var(--primary-color);
+}
+
+.footer-description {
+  color: var(--text-secondary);
+  line-height: 1.6;
+  font-size: 14px;
+  margin: 0;
+  text-align: left;
+}
+
+.footer-copyright {
+  color: var(--text-tertiary);
+  font-size: 14px;
+  margin: 0;
+  text-align: left;
+}
+
+.footer-links {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.footer-social {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.social-link {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  color: var(--text-secondary);
+  text-decoration: none;
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius);
+  transition: all var(--transition);
+  font-weight: 500;
+  font-size: 14px;
+}
+
+.social-link:hover,
+.social-link:focus {
+  color: var(--primary-color);
+  background: var(--surface-hover);
+  transform: translateY(-1px);
+}
+
+.social-link:active {
+  transform: translateY(0);
+}
+
+.social-link svg {
+  flex-shrink: 0;
+}
+
+/* Estados de foco para acessibilidade */
+.social-link:focus {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+}
+
+/* ============================================= */
+/* RESPONSIVIDADE DO FOOTER */
+/* ============================================= */
+
+@media (max-width: 768px) {
+  .footer {
+    padding: var(--space-xl) 0;
+  }
+  
+  .footer-container {
+    padding: 0 var(--space-lg);
+  }
+  
+  .footer-content {
+    flex-direction: column;
+    gap: var(--space-xl);
+    text-align: center;
+  }
+  
+  .footer-info {
+    max-width: none;
+  }
+  
+  .footer-brand {
+    align-items: center;
+  }
+  
+  .footer-social {
+    flex-direction: row;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+  
+  .social-link {
+    padding: var(--space-sm);
+  }
+}
+
+@media (max-width: 480px) {
+  .footer {
+    padding: var(--space-lg) 0;
+  }
+  
+  .footer-container {
+    padding: 0 var(--space-md);
+  }
+  
+  .footer-content {
+    gap: var(--space-lg);
+  }
+  
+  .logo {
+    font-size: 1.1rem;
+  }
+  
+  .footer-description {
+    font-size: 13px;
+  }
+  
+  .footer-copyright {
+    font-size: 13px;
+  }
+  
+  .social-link {
+    font-size: 13px;
+    padding: var(--space-xs) var(--space-sm);
+  }
+}
+
+/* ============================================= */
+/* ANIMAÇÕES E EFEITOS ESPECIAIS */
+/* ============================================= */
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.footer {
+  animation: fadeInUp 0.6s ease;
+}
+
+/* Efeito de brilho no logo */
+.logo {
+  position: relative;
+}
+
+.logo::after {
+  content: '';
+  position: absolute;
+  bottom: -2px;
+  left: 0;
+  width: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--primary-color), var(--primary-light));
+  transition: width var(--transition-slow);
+}
+
+.logo:hover::after {
+  width: 100%;
+}
+
+/* Efeito de gradiente nos links sociais */
+.social-link {
+  position: relative;
+  overflow: hidden;
+}
+
+.social-link::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(var(--primary-rgb), 0.1), transparent);
+  transition: left var(--transition-slow);
+}
+
+.social-link:hover::before {
+  left: 100%;
+}
+
+/* ============================================= */
+/* MODOS DE COR ALTERNATIVOS */
+/* ============================================= */
+
+/* Light mode específico para footer */
+body:not(.dark-mode) .footer {
+  background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+}
+
+/* Dark mode específico para footer */
+.dark-mode .footer {
+  background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+}
+
+/* High contrast mode */
+@media (prefers-contrast: high) {
+  .footer {
+    border-top: 2px solid var(--border-color);
+  }
+  
+  .social-link {
+    border: 1px solid var(--border-color);
+  }
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .footer {
+    animation: none;
+  }
+  
+  .logo::after,
+  .social-link::before {
+    display: none;
+  }
+  
+  .social-link:hover,
+  .social-link:focus {
+    transform: none;
   }
 }

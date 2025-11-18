@@ -6,8 +6,92 @@ const CONFIG = {
   DEBOUNCE_DELAY: 500,
   REQUEST_TIMEOUT: 30000,
   MAX_RETRIES: 2,
-  RETRY_DELAY: 1000
+  RETRY_DELAY: 1000,
+  MAX_SEARCH_HISTORY: 50,
+  // Nova configuração para ambiente
+  ENV: window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' ? 'development' : 'production',
+  // Configurações de rate limit
+  RATE_LIMIT_DELAY: 60000, // 60 segundos padrão
+  AUTO_RETRY_ENABLED: true // Se deve retornar automaticamente
 };
+
+// =============================================
+// GERENCIADOR DE RATE LIMIT COM TIMER
+// =============================================
+class RateLimitManager {
+  static STORAGE_KEY = 'cnpj_rate_limit';
+  static timerInterval = null;
+  static currentTimer = null;
+
+  static setRateLimit(seconds) {
+    const resetTime = Date.now() + (seconds * 1000);
+    localStorage.setItem(this.STORAGE_KEY, resetTime.toString());
+    this.startTimer(seconds);
+  }
+
+  static isRateLimited() {
+    const resetTime = localStorage.getItem(this.STORAGE_KEY);
+    if (!resetTime) return false;
+    
+    return Date.now() < parseInt(resetTime);
+  }
+
+  static getRemainingTime() {
+    const resetTime = localStorage.getItem(this.STORAGE_KEY);
+    if (!resetTime) return 0;
+    
+    const remaining = parseInt(resetTime) - Date.now();
+    return Math.max(0, Math.ceil(remaining / 1000));
+  }
+
+  static clearRateLimit() {
+    localStorage.removeItem(this.STORAGE_KEY);
+    this.stopTimer();
+  }
+
+  static startTimer(seconds) {
+    this.stopTimer(); // Para qualquer timer existente
+    
+    let remaining = seconds;
+    this.currentTimer = {
+      startTime: Date.now(),
+      duration: seconds * 1000,
+      remaining: seconds
+    };
+
+    this.timerInterval = setInterval(() => {
+      remaining--;
+      this.currentTimer.remaining = remaining;
+
+      // Atualizar UI se disponível
+      if (typeof uiManager !== 'undefined' && uiManager.updateTimerDisplay) {
+        uiManager.updateTimerDisplay(remaining);
+      }
+
+      if (remaining <= 0) {
+        this.stopTimer();
+        this.clearRateLimit();
+        
+        // Executar retry automático se configurado
+        if (CONFIG.AUTO_RETRY_ENABLED && typeof uiManager !== 'undefined') {
+          uiManager.handleAutoRetry();
+        }
+      }
+    }, 1000);
+  }
+
+  static stopTimer() {
+    if (this.timerInterval) {
+      clearInterval(this.timerInterval);
+      this.timerInterval = null;
+      this.currentTimer = null;
+    }
+  }
+
+  static getTimerInfo() {
+    return this.currentTimer;
+  }
+}
 
 // =============================================
 // VALIDAÇÃO DE CNPJ (ALGORITMO OFICIAL)
@@ -27,17 +111,14 @@ class CNPJValidator {
   static validate(cnpj) {
     const cleaned = this.clean(cnpj);
     
-    // Verifica tamanho
     if (cleaned.length !== 14) {
       return { isValid: false, error: "CNPJ deve conter 14 dígitos" };
     }
 
-    // Elimina CNPJs inválidos conhecidos
     if (/^(\d)\1+$/.test(cleaned)) {
       return { isValid: false, error: "CNPJ com dígitos repetidos é inválido" };
     }
 
-    // Valida dígitos verificadores
     let tamanho = cleaned.length - 2;
     let numeros = cleaned.substring(0, tamanho);
     let digitos = cleaned.substring(tamanho);
@@ -74,6 +155,331 @@ class CNPJValidator {
 }
 
 // =============================================
+// GERENCIADOR DE HISTÓRICO DE PESQUISAS
+// =============================================
+class SearchHistoryManager {
+  static STORAGE_KEY = 'cnpj_search_history';
+  static MAX_ITEMS = CONFIG.MAX_SEARCH_HISTORY;
+
+  static getHistory() {
+    try {
+      const history = localStorage.getItem(this.STORAGE_KEY);
+      return history ? JSON.parse(history) : {};
+    } catch (error) {
+      console.error('Erro ao carregar histórico:', error);
+      return {};
+    }
+  }
+
+  static saveToHistory(cnpj, data) {
+    try {
+      const history = this.getHistory();
+      const timestamp = new Date().toISOString();
+      
+      // Adicionar nova pesquisa
+      history[cnpj] = {
+        data: data,
+        timestamp: timestamp,
+        companyName: data.company?.name || 'Nome não disponível'
+      };
+
+      // Manter apenas os MAX_ITEMS mais recentes
+      const entries = Object.entries(history);
+      if (entries.length > this.MAX_ITEMS) {
+        const sorted = entries.sort((a, b) => 
+          new Date(b[1].timestamp) - new Date(a[1].timestamp)
+        );
+        const toKeep = sorted.slice(0, this.MAX_ITEMS);
+        const newHistory = Object.fromEntries(toKeep);
+        localStorage.setItem(this.STORAGE_KEY, JSON.stringify(newHistory));
+      } else {
+        localStorage.setItem(this.STORAGE_KEY, JSON.stringify(history));
+      }
+
+      return true;
+    } catch (error) {
+      console.error('Erro ao salvar no histórico:', error);
+      return false;
+    }
+  }
+
+  static clearHistory() {
+    try {
+      localStorage.removeItem(this.STORAGE_KEY);
+      return true;
+    } catch (error) {
+      console.error('Erro ao limpar histórico:', error);
+      return false;
+    }
+  }
+
+  static getHistoryCount() {
+    const history = this.getHistory();
+    return Object.keys(history).length;
+  }
+
+  static getHistoryList() {
+    const history = this.getHistory();
+    return Object.entries(history).map(([cnpj, item]) => ({
+      cnpj,
+      ...item
+    }));
+  }
+}
+
+// =============================================
+// GERENCIADOR DE EXPORTAÇÃO ATUALIZADO
+// =============================================
+class ExportManager {
+  static exportToCSV(selections) {
+    if (!selections || selections.length === 0) return null;
+
+    const headers = [
+      'CNPJ', 'Razão Social', 'Nome Fantasia', 'Situação Cadastral', 
+      'Data Abertura', 'Endereço Completo', 'Telefone', 'Email',
+      'Inscrição Estadual', 'CNAE Principal', 'Código CNAE', 'Porte Empresa',
+      'Natureza Jurídica', 'Capital Social', 'Data Situação Cadastral',
+      'Matriz/Filial', 'Regime Simples', 'Data Opção Simples', 'MEI',
+      'Data Opção MEI', 'Logradouro', 'Número', 'Complemento', 'Bairro',
+      'Cidade', 'Estado', 'CEP', 'País'
+    ];
+
+    const rows = selections.map(item => {
+      const data = item.data;
+      const iePrincipal = this.getPrincipalIE(data.registrations);
+      const capitalSocial = data.company?.equity ? `R$ ${Formatters.currency(data.company.equity)}` : '';
+      
+      return [
+        data.taxId || '',
+        data.company?.name || '',
+        data.alias || '',
+        data.status?.text || '',
+        Formatters.date(data.founded) || '',
+        this.formatAddress(data.address) || '',
+        this.formatPhones(data.phones) || '',
+        this.getPrimaryEmail(data.emails) || '',
+        iePrincipal || '',
+        data.mainActivity?.text || '',
+        data.mainActivity?.id || '',
+        data.company?.size?.text || '',
+        data.company?.nature?.text || '',
+        capitalSocial,
+        Formatters.date(data.statusDate) || '',
+        data.head ? 'Matriz' : 'Filial',
+        data.company?.simples?.optant ? 'SIM' : 'NÃO',
+        Formatters.date(data.company?.simples?.since) || '',
+        data.company?.simei?.optant ? 'SIM' : 'NÃO',
+        Formatters.date(data.company?.simei?.since) || '',
+        data.address?.street || '',
+        data.address?.number || '',
+        data.address?.details || '',
+        data.address?.district || '',
+        data.address?.city || '',
+        data.address?.state || '',
+        Formatters.CEP(data.address?.zip) || '',
+        data.address?.country?.name || ''
+      ].map(field => `"${field}"`).join(',');
+    });
+
+    const csvContent = [headers.join(','), ...rows].join('\n');
+    return csvContent;
+  }
+
+  static exportToJSON(selections) {
+    const exportData = {
+      exported_at: new Date().toISOString(),
+      total_companies: selections.length,
+      selections: selections.map(item => ({
+        cnpj: item.cnpj,
+        company_name: item.data.company?.name,
+        timestamp: item.timestamp,
+        exported_at: new Date().toISOString()
+      })),
+      data: selections.reduce((acc, item) => {
+        acc[item.cnpj] = item.data;
+        return acc;
+      }, {})
+    };
+
+    return JSON.stringify(exportData, null, 2);
+  }
+
+  static async exportToExcel(selections) {
+    if (!selections || selections.length === 0) return null;
+
+    try {
+      // Criar workbook
+      const wb = XLSX.utils.book_new();
+      
+      // Dados principais
+      const mainData = selections.map(item => {
+        const data = item.data;
+        const iePrincipal = this.getPrincipalIE(data.registrations);
+        const capitalSocial = data.company?.equity ? `R$ ${Formatters.currency(data.company.equity)}` : '';
+        
+        return {
+          'CNPJ': data.taxId || '',
+          'Razão Social': data.company?.name || '',
+          'Nome Fantasia': data.alias || '',
+          'Situação Cadastral': data.status?.text || '',
+          'Data Abertura': Formatters.date(data.founded) || '',
+          'Data Situação': Formatters.date(data.statusDate) || '',
+          'Inscrição Estadual': iePrincipal || '',
+          'Porte Empresa': data.company?.size?.text || '',
+          'Natureza Jurídica': data.company?.nature?.text || '',
+          'Capital Social': capitalSocial,
+          'Matriz/Filial': data.head ? 'Matriz' : 'Filial',
+          'CNAE Principal': data.mainActivity?.text || '',
+          'Código CNAE': data.mainActivity?.id || '',
+          'Regime Simples': data.company?.simples?.optant ? 'SIM' : 'NÃO',
+          'Data Opção Simples': Formatters.date(data.company?.simples?.since) || '',
+          'MEI': data.company?.simei?.optant ? 'SIM' : 'NÃO',
+          'Data Opção MEI': Formatters.date(data.company?.simei?.since) || '',
+          'Email': this.getPrimaryEmail(data.emails) || '',
+          'Telefone': this.formatPhones(data.phones) || ''
+        };
+      });
+
+      // Dados de endereço
+      const addressData = selections.map(item => {
+        const data = item.data;
+        return {
+          'CNPJ': data.taxId || '',
+          'Razão Social': data.company?.name || '',
+          'Logradouro': data.address?.street || '',
+          'Número': data.address?.number || '',
+          'Complemento': data.address?.details || '',
+          'Bairro': data.address?.district || '',
+          'Cidade': data.address?.city || '',
+          'Estado': data.address?.state || '',
+          'CEP': Formatters.CEP(data.address?.zip) || '',
+          'País': data.address?.country?.name || '',
+          'Endereço Completo': this.formatAddress(data.address) || ''
+        };
+      });
+
+      // Dados de sócios (apenas os 3 primeiros para não ficar muito grande)
+      const partnersData = [];
+      selections.forEach(item => {
+        const data = item.data;
+        const members = data.company?.members || [];
+        
+        if (members.length > 0) {
+          members.slice(0, 3).forEach((member, index) => {
+            partnersData.push({
+              'CNPJ': data.taxId || '',
+              'Razão Social': data.company?.name || '',
+              'Nome Sócio': member.person?.name || '',
+              'Cargo': member.role?.text || '',
+              'Data Entrada': Formatters.date(member.since) || '',
+              'Faixa Etária': member.person?.age || '',
+              'Ordem': index + 1
+            });
+          });
+        } else {
+          partnersData.push({
+            'CNPJ': data.taxId || '',
+            'Razão Social': data.company?.name || '',
+            'Nome Sócio': 'Nenhum sócio encontrado',
+            'Cargo': '',
+            'Data Entrada': '',
+            'Faixa Etária': '',
+            'Ordem': 1
+          });
+        }
+      });
+
+      // Criar worksheets
+      const wsMain = XLSX.utils.json_to_sheet(mainData);
+      const wsAddress = XLSX.utils.json_to_sheet(addressData);
+      const wsPartners = XLSX.utils.json_to_sheet(partnersData);
+
+      // Adicionar worksheets ao workbook
+      XLSX.utils.book_append_sheet(wb, wsMain, "Dados Principais");
+      XLSX.utils.book_append_sheet(wb, wsAddress, "Endereços");
+      XLSX.utils.book_append_sheet(wb, wsPartners, "Sócios");
+
+      // Gerar arquivo
+      const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+      return excelBuffer;
+
+    } catch (error) {
+      console.error('Erro ao gerar Excel:', error);
+      // Fallback para CSV se houver erro
+      return this.exportToCSV(selections);
+    }
+  }
+
+  static downloadFile(content, filename, mimeType) {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
+
+  static downloadExcelFile(excelBuffer, filename) {
+    const blob = new Blob([excelBuffer], { 
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
+
+  static formatAddress(address) {
+    if (!address) return '';
+    const parts = [
+      address.street,
+      address.number,
+      address.details,
+      address.district,
+      address.city,
+      address.state
+    ].filter(part => part && part.trim() !== '');
+    
+    const formattedAddress = parts.join(', ');
+    const zipCode = address.zip ? ` - CEP: ${Formatters.CEP(address.zip)}` : '';
+    
+    return formattedAddress + zipCode;
+  }
+
+  static formatPhones(phones) {
+    if (!phones || !Array.isArray(phones)) return '';
+    return phones.map(phone => 
+      phone.area && phone.number ? `(${phone.area}) ${phone.number}` : phone.number
+    ).filter(phone => phone).join('; ');
+  }
+
+  static getPrimaryEmail(emails) {
+    if (!emails || !Array.isArray(emails) || emails.length === 0) return '';
+    const corporateEmail = emails.find(email => email.ownership === 'CORPORATE');
+    return (corporateEmail || emails[0])?.address || '';
+  }
+
+  static getPrincipalIE(registrations) {
+    if (!registrations || !Array.isArray(registrations)) return '';
+
+    const ieNormal = registrations.find(reg => reg.type?.id === 1);
+    if (ieNormal) return `${ieNormal.number} (${ieNormal.state})`;
+
+    const primeira = registrations[0];
+    if (primeira) return `${primeira.number} (${primeira.state})`;
+
+    return '';
+  }
+}
+
+// =============================================
 // GERENCIADOR DE ESTADO
 // =============================================
 class AppState {
@@ -82,6 +488,8 @@ class AppState {
     this.lastSearch = null;
     this.isLoading = false;
     this.retryCount = 0;
+    this.exportSelections = new Set();
+    this.pendingSearch = null; // Para armazenar pesquisa pendente
   }
 
   setTheme(theme) {
@@ -95,6 +503,34 @@ class AppState {
 
   setLastSearch(cnpj) {
     this.lastSearch = cnpj;
+  }
+
+  setPendingSearch(cnpj) {
+    this.pendingSearch = cnpj;
+  }
+
+  clearPendingSearch() {
+    this.pendingSearch = null;
+  }
+
+  toggleExportSelection(cnpj) {
+    if (this.exportSelections.has(cnpj)) {
+      this.exportSelections.delete(cnpj);
+    } else {
+      this.exportSelections.add(cnpj);
+    }
+  }
+
+  selectAllExport(history) {
+    this.exportSelections = new Set(history.map(item => item.cnpj));
+  }
+
+  deselectAllExport() {
+    this.exportSelections.clear();
+  }
+
+  getSelectedExports(history) {
+    return history.filter(item => this.exportSelections.has(item.cnpj));
   }
 }
 
@@ -118,6 +554,12 @@ class ApiManager {
       clearTimeout(timeoutId);
 
       if (!response.ok) {
+        // Verificar se é rate limit (429)
+        if (response.status === 429) {
+          const retryAfter = response.headers.get('Retry-After');
+          const waitTime = retryAfter ? parseInt(retryAfter) : 60;
+          throw new Error(`RATE_LIMIT:${waitTime}`);
+        }
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
@@ -207,15 +649,124 @@ class Formatters {
       return "0,00";
     }
   }
+
+  static time(seconds) {
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = seconds % 60;
+    return `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
+  }
 }
 
 // =============================================
-// GERENCIADOR DE UI
+// MONITORAMENTO E TELEMETRIA CORRIGIDO
+// =============================================
+class Telemetry {
+  static isDevelopment() {
+    return CONFIG.ENV === 'development';
+  }
+
+  static trackEvent(eventName, properties = {}) {
+    // Google Analytics (se disponível)
+    if (typeof gtag !== 'undefined') {
+      gtag('event', eventName, properties);
+    }
+    
+    // Log para desenvolvimento
+    if (this.isDevelopment()) {
+      console.log('📊 Evento:', eventName, properties);
+    }
+
+    // Enviar para analytics próprio (opcional)
+    this.sendToAnalytics(eventName, properties);
+  }
+
+  static sendToAnalytics(eventName, properties) {
+    // Implementação básica de analytics
+    // Pode ser expandida para enviar para um serviço externo
+    const analyticsData = {
+      event: eventName,
+      properties: properties,
+      timestamp: new Date().toISOString(),
+      userAgent: navigator.userAgent,
+      url: window.location.href
+    };
+
+    // Armazenar localmente para debug
+    if (this.isDevelopment()) {
+      const analyticsHistory = JSON.parse(localStorage.getItem('analytics_history') || '[]');
+      analyticsHistory.push(analyticsData);
+      localStorage.setItem('analytics_history', JSON.stringify(analyticsHistory.slice(-50))); // Últimos 50 eventos
+    }
+  }
+
+  static trackSearch(cnpj, success, duration, error = null) {
+    this.trackEvent('cnpj_search', {
+      cnpj_length: cnpj.length,
+      success: success,
+      duration: duration,
+      error_type: error?.name || null,
+      environment: CONFIG.ENV
+    });
+  }
+
+  static trackExport(format, itemCount) {
+    this.trackEvent('export_data', {
+      format: format,
+      item_count: itemCount,
+      environment: CONFIG.ENV
+    });
+  }
+
+  static trackError(error, context = {}) {
+    this.trackEvent('error_occurred', {
+      error_name: error.name,
+      error_message: error.message,
+      environment: CONFIG.ENV,
+      ...context
+    });
+    
+    // Reportar erro para serviço externo se disponível
+    if (typeof window.Sentry !== 'undefined') {
+      window.Sentry.captureException(error, { extra: context });
+    }
+
+    // Log detalhado em desenvolvimento
+    if (this.isDevelopment()) {
+      console.error('❌ Erro:', error, context);
+    }
+  }
+
+  static trackPageView() {
+    this.trackEvent('page_view', {
+      page_title: document.title,
+      page_location: window.location.href,
+      environment: CONFIG.ENV
+    });
+  }
+
+  static trackRateLimit(waitTime) {
+    this.trackEvent('rate_limit_triggered', {
+      wait_time: waitTime,
+      environment: CONFIG.ENV
+    });
+  }
+
+  static trackAutoRetry() {
+    this.trackEvent('auto_retry_executed', {
+      environment: CONFIG.ENV
+    });
+  }
+}
+
+// =============================================
+// GERENCIADOR DE UI COM TIMER
 // =============================================
 class UIManager {
   constructor() {
     this.elements = this.initializeElements();
     this.bindEvents();
+    this.initializeTelemetry();
+    this.initializeRateLimitCheck();
   }
 
   initializeElements() {
@@ -239,7 +790,18 @@ class UIManager {
       address: document.getElementById("address"),
       cnae: document.getElementById("cnae"),
       phones: document.getElementById("phones"),
-      email: document.getElementById("email")
+      email: document.getElementById("email"),
+
+      // Elementos de exportação
+      exportList: document.getElementById("exportList"),
+      selectAllBtn: document.getElementById("selectAllBtn"),
+      deselectAllBtn: document.getElementById("deselectAllBtn"),
+      clearAllBtn: document.getElementById("clearAllBtn"),
+      exportExcelBtn: document.getElementById("exportExcelBtn"),
+      exportCSVBtn: document.getElementById("exportCSVBtn"),
+      exportJSONBtn: document.getElementById("exportJSONBtn"),
+      exportStats: document.getElementById("exportStats"),
+      selectionStats: document.getElementById("selectionStats")
     };
   }
 
@@ -269,16 +831,350 @@ class UIManager {
       });
     });
 
+    // Eventos de exportação
+    this.elements.selectAllBtn.addEventListener("click", () => this.handleSelectAll());
+    this.elements.deselectAllBtn.addEventListener("click", () => this.handleDeselectAll());
+    this.elements.clearAllBtn.addEventListener("click", () => this.handleClearAll());
+    this.elements.exportExcelBtn.addEventListener("click", () => this.handleExport('excel'));
+    this.elements.exportCSVBtn.addEventListener("click", () => this.handleExport('csv'));
+    this.elements.exportJSONBtn.addEventListener("click", () => this.handleExport('json'));
+
     // Focar no input ao carregar
     this.elements.cnpjInput.focus();
+
+    // Carregar histórico de exportação
+    this.loadExportHistory();
   }
+
+  initializeTelemetry() {
+    // Inicializar analytics
+    Telemetry.trackPageView();
+    
+    // Configurar error handling global
+    this.setupGlobalErrorHandling();
+  }
+
+  initializeRateLimitCheck() {
+    // Verificar se há rate limit ativo ao carregar a página
+    if (RateLimitManager.isRateLimited()) {
+      const remaining = RateLimitManager.getRemainingTime();
+      this.showRateLimitError(remaining);
+    }
+  }
+
+  setupGlobalErrorHandling() {
+    window.addEventListener('error', (event) => {
+      Telemetry.trackError(event.error, {
+        type: 'global_error',
+        filename: event.filename,
+        lineno: event.lineno,
+        colno: event.colno
+      });
+    });
+
+    window.addEventListener('unhandledrejection', (event) => {
+      Telemetry.trackError(new Error('Unhandled Promise Rejection'), {
+        type: 'unhandled_rejection',
+        reason: event.reason
+      });
+    });
+  }
+
+  // =============================================
+  // SISTEMA DE RATE LIMIT E TIMER
+  // =============================================
+
+  showRateLimitError(waitTime) {
+    // Armazenar a pesquisa atual se houver
+    const currentSearch = this.elements.cnpjInput.value;
+    if (currentSearch && CNPJValidator.validate(currentSearch).isValid) {
+      appState.setPendingSearch(CNPJValidator.validate(currentSearch).cleaned);
+    }
+
+    // Configurar o rate limit
+    RateLimitManager.setRateLimit(waitTime);
+    
+    // Atualizar a UI
+    this.disableSearchButton(true);
+    this.elements.cnpjInput.disabled = true;
+    this.elements.errorMessage.classList.remove("hidden");
+    
+    // Iniciar a atualização do display do timer
+    this.updateTimerDisplay(waitTime);
+
+    // Track do evento
+    Telemetry.trackRateLimit(waitTime);
+  }
+
+  updateTimerDisplay(seconds) {
+    if (seconds <= 0) {
+      this.elements.errorMessage.classList.add("hidden");
+      this.disableSearchButton(false);
+      this.elements.cnpjInput.disabled = false;
+      return;
+    }
+
+    const timeString = Formatters.time(seconds);
+    this.elements.errorMessage.innerHTML = `
+      <div class="rate-limit-message">
+        <div class="rate-limit-icon">⏰</div>
+        <div class="rate-limit-content">
+          <strong>Limite de consultas excedido</strong>
+          <p>Nova consulta automática em: <span class="timer">${timeString}</span></p>
+          <small>Você pode continuar navegando, a pesquisa será realizada automaticamente</small>
+        </div>
+      </div>
+    `;
+  }
+
+  handleAutoRetry() {
+    const pendingSearch = appState.pendingSearch;
+    
+    if (pendingSearch && CONFIG.AUTO_RETRY_ENABLED) {
+      console.log("🔄 Executando retry automático...");
+      
+      // Restaurar o CNPJ no input
+      this.elements.cnpjInput.value = Formatters.CNPJ(pendingSearch);
+      
+      // Executar a pesquisa
+      this.handleSearch();
+      
+      // Limpar pesquisa pendente
+      appState.clearPendingSearch();
+      
+      Telemetry.trackAutoRetry();
+    }
+  }
+
+  // =============================================
+  // MANIPULAÇÃO DE EXPORTAÇÃO
+  // =============================================
+
+  loadExportHistory() {
+    const history = SearchHistoryManager.getHistoryList();
+    this.updateExportUI(history);
+  }
+
+  updateExportUI(history) {
+    const hasHistory = history.length > 0;
+    
+    // Atualizar estatísticas
+    this.elements.exportStats.textContent = `${history.length} pesquisa(s) salva(s)`;
+    
+    const selectedCount = appState.exportSelections.size;
+    if (selectedCount > 0) {
+      this.elements.selectionStats.textContent = `${selectedCount} selecionada(s)`;
+      this.elements.selectionStats.classList.remove('hidden');
+    } else {
+      this.elements.selectionStats.classList.add('hidden');
+    }
+
+    // Habilitar/desabilitar botões
+    const hasSelections = selectedCount > 0;
+    this.elements.exportExcelBtn.disabled = !hasSelections;
+    this.elements.exportCSVBtn.disabled = !hasSelections;
+    this.elements.exportJSONBtn.disabled = !hasSelections;
+    this.elements.clearAllBtn.disabled = !hasHistory;
+
+    // Atualizar lista
+    if (!hasHistory) {
+      this.elements.exportList.innerHTML = `
+        <div class="empty-state">
+          <div class="icon">📋</div>
+          <h3>Nenhuma pesquisa salva</h3>
+          <p>As pesquisas que você fizer aparecerão aqui automaticamente</p>
+        </div>
+      `;
+      return;
+    }
+
+    const historyHTML = history.map(item => {
+      const isSelected = appState.exportSelections.has(item.cnpj);
+      const formattedCNPJ = Formatters.CNPJ(item.cnpj);
+      const companyName = item.companyName || 'Nome não disponível';
+      
+      return `
+        <div class="export-item" data-cnpj="${item.cnpj}">
+          <label class="export-checkbox">
+            <input 
+              type="checkbox" 
+              ${isSelected ? 'checked' : ''}
+              onchange="uiManager.handleExportSelection('${item.cnpj}')"
+            />
+            <span class="checkmark"></span>
+          </label>
+          <div class="export-info">
+            <div class="export-company">${companyName}</div>
+            <div class="export-cnpj">${formattedCNPJ}</div>
+            <div class="export-date">Consultado em: ${Formatters.dateTime(item.timestamp)}</div>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    this.elements.exportList.innerHTML = historyHTML;
+  }
+
+  handleExportSelection(cnpj) {
+    appState.toggleExportSelection(cnpj);
+    this.loadExportHistory();
+  }
+
+  handleSelectAll() {
+    const history = SearchHistoryManager.getHistoryList();
+    appState.selectAllExport(history);
+    this.loadExportHistory();
+    Telemetry.trackEvent('export_select_all', { count: history.length });
+  }
+
+  handleDeselectAll() {
+    appState.deselectAllExport();
+    this.loadExportHistory();
+    Telemetry.trackEvent('export_deselect_all');
+  }
+
+  handleClearAll() {
+    if (confirm('Tem certeza que deseja limpar todas as pesquisas salvas?')) {
+      SearchHistoryManager.clearHistory();
+      appState.deselectAllExport();
+      this.loadExportHistory();
+      this.showNotification('Todas as pesquisas foram removidas', 'success');
+      Telemetry.trackEvent('history_cleared');
+    }
+  }
+
+  async handleExport(format) {
+    const startTime = Date.now();
+    const history = SearchHistoryManager.getHistoryList();
+    const selections = appState.getSelectedExports(history);
+    
+    if (selections.length === 0) {
+      this.showNotification('Selecione pelo menos uma pesquisa para exportar', 'error');
+      return;
+    }
+
+    try {
+      // Para Excel, precisamos da biblioteca SheetJS
+      if (format === 'excel') {
+        try {
+          await this.loadSheetJS();
+        } catch (error) {
+          console.error('Erro ao carregar SheetJS:', error);
+          this.showNotification('Erro ao carregar biblioteca Excel. Usando CSV como alternativa.', 'warning');
+          // Fallback para CSV
+          format = 'csv';
+        }
+      }
+
+      let content, filename, mimeType;
+
+      switch (format) {
+        case 'excel':
+          if (typeof XLSX === 'undefined') {
+            throw new Error('Biblioteca Excel não disponível');
+          }
+          
+          const excelBuffer = await ExportManager.exportToExcel(selections);
+          if (excelBuffer && (excelBuffer instanceof ArrayBuffer || excelBuffer instanceof Uint8Array)) {
+            filename = `cnpj_pesquisas_${new Date().toISOString().split('T')[0]}.xlsx`;
+            ExportManager.downloadExcelFile(excelBuffer, filename);
+            this.showNotification('Arquivo Excel baixado com sucesso!', 'success');
+          } else {
+            throw new Error('Falha ao gerar arquivo Excel');
+          }
+          break;
+            
+        case 'csv':
+          content = ExportManager.exportToCSV(selections);
+          filename = `cnpj_pesquisas_${new Date().toISOString().split('T')[0]}.csv`;
+          mimeType = 'text/csv';
+          ExportManager.downloadFile(content, filename, mimeType);
+          this.showNotification('Arquivo CSV baixado com sucesso!', 'success');
+          break;
+            
+        case 'json':
+          content = ExportManager.exportToJSON(selections);
+          filename = `cnpj_pesquisas_${new Date().toISOString().split('T')[0]}.json`;
+          mimeType = 'application/json';
+          ExportManager.downloadFile(content, filename, mimeType);
+          this.showNotification('Arquivo JSON baixado com sucesso!', 'success');
+          break;
+      }
+      
+      const duration = Date.now() - startTime;
+      Telemetry.trackExport(format, selections.length);
+      
+    } catch (error) {
+      console.error('Erro na exportação:', error);
+      Telemetry.trackError(error, { action: 'export', format: format });
+      
+      if (format === 'excel') {
+        // Tentar fallback para CSV se o Excel falhar
+        this.showNotification('Erro ao exportar Excel. Tentando CSV...', 'warning');
+        setTimeout(() => this.handleExport('csv'), 1000);
+      } else {
+        this.showNotification(`Erro ao exportar arquivo ${format.toUpperCase()}`, 'error');
+      }
+    }
+  }
+
+  async loadSheetJS() {
+    return new Promise((resolve, reject) => {
+      if (typeof XLSX !== 'undefined') {
+        resolve();
+        return;
+      }
+
+      const script = document.createElement('script');
+      script.src = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
+      script.onload = () => {
+        console.log('✅ SheetJS carregado com sucesso');
+        resolve();
+      };
+      script.onerror = () => {
+        console.error('❌ Erro ao carregar SheetJS');
+        reject(new Error('Falha ao carregar biblioteca Excel'));
+      };
+      document.head.appendChild(script);
+    });
+  }
+
+  showNotification(message, type = 'info') {
+    const notification = document.createElement('div');
+    notification.className = `notification notification-${type}`;
+    notification.textContent = message;
+    notification.style.cssText = `
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      padding: 12px 20px;
+      background: ${type === 'success' ? '#10b981' : type === 'error' ? '#ef4444' : '#3b82f6'};
+      color: white;
+      border-radius: 8px;
+      z-index: 1000;
+      animation: slideIn 0.3s ease;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+    `;
+
+    document.body.appendChild(notification);
+
+    setTimeout(() => {
+      notification.remove();
+    }, 3000);
+
+    // Track notification
+    Telemetry.trackEvent('notification_shown', { type: type, message: message });
+  }
+
+  // =============================================
+  // MÉTODOS EXISTENTES (mantidos para compatibilidade)
+  // =============================================
 
   handleInputFormat(e) {
     const input = e.target;
     const cursorPosition = input.selectionStart;
     const originalLength = input.value.length;
     
-    // Formata o CNPJ enquanto digita
     let value = input.value.replace(/\D/g, "");
     
     if (value.length <= 14) {
@@ -298,7 +1194,6 @@ class UIManager {
     
     input.value = value;
     
-    // Mantém a posição do cursor
     const newLength = input.value.length;
     const lengthDiff = newLength - originalLength;
     const newCursorPosition = cursorPosition + lengthDiff;
@@ -307,7 +1202,15 @@ class UIManager {
   }
 
   async handleSearch() {
+    // Verificar se está em rate limit
+    if (RateLimitManager.isRateLimited()) {
+      const remaining = RateLimitManager.getRemainingTime();
+      this.showRateLimitError(remaining);
+      return;
+    }
+
     const cnpjValue = this.elements.cnpjInput.value;
+    const startTime = Date.now();
     
     this.clearError();
     this.hideResult();
@@ -316,13 +1219,14 @@ class UIManager {
     
     if (!validation.isValid) {
       this.showError(validation.error);
+      Telemetry.trackEvent('validation_error', { error: validation.error });
       return;
     }
 
-    await this.searchCNPJ(validation.cleaned);
+    await this.searchCNPJ(validation.cleaned, startTime);
   }
 
-  async searchCNPJ(cnpj) {
+  async searchCNPJ(cnpj, startTime) {
     this.showLoading();
     this.disableSearchButton(true);
     appState.setLoading(true);
@@ -333,26 +1237,45 @@ class UIManager {
       const data = await ApiManager.fetchCNPJ(cnpj);
       console.log("✅ Dados recebidos com sucesso");
 
+      // Salvar no histórico de pesquisas
+      SearchHistoryManager.saveToHistory(cnpj, data);
+      
       this.displayData(data);
       appState.setLastSearch(cnpj);
       appState.retryCount = 0;
       
+      // Atualizar a aba de exportação se estiver visível
+      this.loadExportHistory();
+      
+      const duration = Date.now() - startTime;
+      Telemetry.trackSearch(cnpj, true, duration);
+      
     } catch (error) {
       console.error("💥 Erro na consulta:", error);
       
-      if (appState.retryCount < CONFIG.MAX_RETRIES) {
+      const duration = Date.now() - startTime;
+      Telemetry.trackSearch(cnpj, false, duration, error);
+      
+      // Verificar se é um erro de rate limit
+      if (error.message.startsWith('RATE_LIMIT:')) {
+        const waitTime = parseInt(error.message.split(':')[1]);
+        this.showRateLimitError(waitTime);
+      } else if (appState.retryCount < CONFIG.MAX_RETRIES) {
         appState.retryCount++;
         console.log(`🔄 Tentativa ${appState.retryCount} de ${CONFIG.MAX_RETRIES}`);
         
         await this.delay(CONFIG.RETRY_DELAY);
-        return this.searchCNPJ(cnpj);
+        return this.searchCNPJ(cnpj, startTime);
+      } else {
+        this.showError(this.getErrorMessage(error));
+        appState.retryCount = 0;
       }
-      
-      this.showError(this.getErrorMessage(error));
-      appState.retryCount = 0;
     } finally {
       this.hideLoading();
-      this.disableSearchButton(false);
+      // Só reabilita se não estiver em rate limit
+      if (!RateLimitManager.isRateLimited()) {
+        this.disableSearchButton(false);
+      }
       appState.setLoading(false);
     }
   }
@@ -364,8 +1287,6 @@ class UIManager {
       return "A consulta demorou muito tempo. Tente novamente.";
     } else if (message.includes("404") || message.includes("não encontrada")) {
       return "Empresa não encontrada para o CNPJ informado.";
-    } else if (message.includes("429") || message.includes("Limite")) {
-      return "Limite de consultas excedido. Tente novamente em alguns instantes.";
     } else if (message.includes("Failed to fetch")) {
       return "Erro de conexão. Verifique sua internet e tente novamente.";
     }
@@ -381,40 +1302,38 @@ class UIManager {
 
     console.log("📊 Exibindo dados:", data);
 
-    // Dados básicos
     this.setElementText(this.elements.companyName, data.company?.name);
     this.setElementText(this.elements.tradeName, data.alias || data.company?.name);
     this.setElementText(this.elements.cnpj, Formatters.CNPJ(data.taxId));
     
-    // Inscrição Estadual
     const iePrincipal = this.getPrincipalIE(data.registrations);
     this.setElementText(this.elements.ie, iePrincipal);
 
-    // Situação cadastral
     const statusText = data.status?.text || "Não informado";
     this.setElementText(this.elements.status, statusText);
     this.elements.status.className = `value ${statusText.toLowerCase().includes("ativa") ? "status-active" : "status-inactive"}`;
 
-    // Endereço
     const address = this.formatAddress(data.address);
     this.setElementText(this.elements.address, address);
 
-    // CNAE Principal
     this.setElementText(this.elements.cnae, data.mainActivity?.text);
 
-    // Telefones
     const phones = this.formatPhones(data.phones);
     this.setElementText(this.elements.phones, phones);
 
-    // E-mail
     const email = this.getPrimaryEmail(data.emails);
     this.setElementText(this.elements.email, email);
 
-    // Sócios e dados completos
     this.displayPartners(data.company?.members);
     this.displayCompleteData(data);
 
     this.showResult();
+
+    // Track successful data display
+    Telemetry.trackEvent('data_displayed', {
+      has_partners: !!(data.company?.members && data.company.members.length > 0),
+      has_activities: !!(data.sideActivities && data.sideActivities.length > 0)
+    });
   }
 
   getPrincipalIE(registrations) {
@@ -483,7 +1402,6 @@ class UIManager {
 
     console.log("👥 Exibindo sócios:", members);
 
-    // Ordenar por data (mais recente primeiro)
     const sortedMembers = [...members].sort((a, b) => {
       try {
         const dateA = a.since ? new Date(a.since) : new Date(0);
@@ -494,7 +1412,6 @@ class UIManager {
       }
     });
 
-    // Limitar a 6 sócios na aba principal
     const displayedMembers = sortedMembers.slice(0, 6);
 
     displayedMembers.forEach(member => {
@@ -502,7 +1419,6 @@ class UIManager {
       this.elements.partnersList.appendChild(partnerItem);
     });
 
-    // Mostrar contador se houver mais sócios
     if (sortedMembers.length > 6) {
       const morePartners = document.createElement("div");
       morePartners.className = "partner-more";
@@ -610,7 +1526,6 @@ class UIManager {
       });
     }
 
-    // Regimes Especiais
     const regimes = [];
     if (data.company?.simples?.optant) {
       regimes.push(`Simples Nacional desde ${Formatters.date(data.company.simples.since)}`);
@@ -646,7 +1561,6 @@ class UIManager {
   createContactSection(data) {
     const fields = [];
 
-    // Telefones
     if (data.phones && data.phones.length > 0) {
       const phones = data.phones.map(phone => {
         const tipo = phone.type === "LANDLINE" ? "Fixo" : "Celular";
@@ -660,7 +1574,6 @@ class UIManager {
       }
     }
 
-    // E-mails
     if (data.emails && data.emails.length > 0) {
       const emails = data.emails.map(email => {
         const tipo = email.ownership === "CORPORATE" ? "Corporativo" : "Outro";
@@ -703,7 +1616,6 @@ class UIManager {
       fields.push({ label: "Inscrições Estaduais", value: ies });
     }
 
-    // SUFRAMA
     if (data.suframa && data.suframa.length > 0) {
       const suframaItems = data.suframa.map(suf => {
         const status = suf.approved ? "✅ Aprovado" : "❌ Pendente";
@@ -711,7 +1623,6 @@ class UIManager {
       });
       fields.push({ label: "Registro SUFRAMA", value: suframaItems });
 
-      // Incentivos fiscais da SUFRAMA
       if (data.suframa[0].incentives && data.suframa[0].incentives.length > 0) {
         const incentivos = data.suframa[0].incentives.map(
           inc => `${inc.tribute}: ${inc.benefit} - ${inc.purpose}`
@@ -805,7 +1716,6 @@ class UIManager {
     element.textContent = text || "Não informado";
   }
 
-  // Controles de UI
   showLoading() {
     this.elements.loading.classList.remove("hidden");
     this.elements.loading.setAttribute("aria-busy", "true");
@@ -820,7 +1730,6 @@ class UIManager {
     this.elements.result.classList.remove("hidden");
     this.elements.result.setAttribute("aria-live", "polite");
     
-    // Focar na primeira aba para acessibilidade
     const firstTab = document.querySelector('.tab-button');
     if (firstTab) firstTab.focus();
   }
@@ -832,9 +1741,9 @@ class UIManager {
   showError(message) {
     this.elements.errorMessage.textContent = message;
     this.elements.errorMessage.classList.remove("hidden");
-    
-    // Focar na mensagem de erro para acessibilidade
     this.elements.errorMessage.focus();
+    
+    Telemetry.trackEvent('error_displayed', { message: message });
   }
 
   clearError() {
@@ -844,6 +1753,7 @@ class UIManager {
 
   disableSearchButton(disabled) {
     this.elements.searchBtn.disabled = disabled;
+    this.elements.cnpjInput.disabled = disabled; // Desabilita o input também
     const buttonText = this.elements.searchBtn.querySelector(".button-text");
     const buttonLoading = this.elements.searchBtn.querySelector(".button-loading");
 
@@ -859,7 +1769,6 @@ class UIManager {
   }
 
   switchTab(tabName) {
-    // Atualizar botões das tabs
     document.querySelectorAll(".tab-button").forEach(button => {
       button.classList.remove("active");
       button.setAttribute("aria-selected", "false");
@@ -869,13 +1778,19 @@ class UIManager {
     activeButton.classList.add("active");
     activeButton.setAttribute("aria-selected", "true");
 
-    // Atualizar conteúdo das tabs
     document.querySelectorAll(".tab-pane").forEach(pane => {
       pane.classList.remove("active");
     });
     
     const activePane = document.getElementById(`tab-${tabName}`);
     activePane.classList.add("active");
+
+    // Se for a aba de exportação, atualizar a lista
+    if (tabName === 'exportar') {
+      this.loadExportHistory();
+    }
+
+    Telemetry.trackEvent('tab_switched', { tab: tabName });
   }
 
   toggleTheme() {
@@ -887,13 +1802,14 @@ class UIManager {
       body.classList.remove("dark-mode");
       themeIcon.textContent = "🌙";
       appState.setTheme("light");
+      Telemetry.trackEvent('theme_changed', { theme: 'light' });
     } else {
       body.classList.add("dark-mode");
       themeIcon.textContent = "☀️";
       appState.setTheme("dark");
+      Telemetry.trackEvent('theme_changed', { theme: 'dark' });
     }
 
-    // Anúncio para leitores de tela
     this.announceToScreenReader(`Modo ${isDarkMode ? 'claro' : 'escuro'} ativado`);
   }
 
@@ -970,7 +1886,7 @@ if (document.readyState === 'loading') {
   initializeApp();
 }
 
-// Exportar para testes (se necessário)
+// Exportar para testes
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { CNPJValidator, Formatters, ApiManager };
+  module.exports = { CNPJValidator, Formatters, ApiManager, SearchHistoryManager, ExportManager };
 }

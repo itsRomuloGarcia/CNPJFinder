@@ -9,17 +9,17 @@
     
     <!-- Open Graph -->
     <meta property="og:title" content="CNPJ Finder" />
-    <meta property="og:description" content="Consulte CNPJ de empresas" />
+    <meta property="og:description" content="Consulte CNPJ de empresas brasileiras de forma gratuita" />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://cnpj-finder.vercel.app" />
-    <meta property="og:image" content="https://cnpj-finder.vercel.app/og-image.jpg" />
+    <meta property="og:image" content="https://cnpj-finder.vercel.app/icon-512.png" />
     
     <!-- Twitter Card -->
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="CNPJ Finder - Consulta Gratuita de CNPJ" />
-    <meta name="twitter:description" content="Consulte CNPJ" />
+    <meta name="twitter:description" content="Consulte CNPJ de empresas brasileiras" />
     
-    <title>CNPJ Finder</title>
+    <title>CNPJ Finder - Consulta de CNPJ</title>
     <link rel="stylesheet" href="style.css" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -28,12 +28,25 @@
       rel="stylesheet"
     />
     
-    <!-- Favicon -->
-    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
-    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
-    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
-    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
-    <link rel="manifest" href="/site.webmanifest" />
+    <!-- ============================================= -->
+    <!-- FAVICON SVG - USANDO O MESMO ÍCONE DO FOOTER -->
+    <!-- ============================================= -->
+    
+    <!-- Favicon SVG (solução moderna) -->
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23c57001'><path d='M20 6h-4V4c0-1.1-.9-2-2-2h-4c-1.1 0-2 .9-2 2v2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zM10 4h4v2h-4V4zm10 16H4V8h16v12z'/><path d='M8 10h8v2H8zM8 14h8v2H8zM8 18h5v2H8z'/></svg>">
+    
+    <!-- Fallback para navegadores antigos -->
+    <link rel="alternate icon" type="image/x-icon" href="/favicon.ico">
+    
+    <!-- Apple Touch Icon (usando o mesmo SVG) -->
+    <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23c57001'><path d='M20 6h-4V4c0-1.1-.9-2-2-2h-4c-1.1 0-2 .9-2 2v2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zM10 4h4v2h-4V4zm10 16H4V8h16v12z'/><path d='M8 10h8v2H8zM8 14h8v2H8zM8 18h5v2H8z'/></svg>">
+    
+    <!-- Web App Manifest -->
+    <link rel="manifest" href="/site.webmanifest">
+    
+    <!-- Theme Color -->
+    <meta name="theme-color" content="#c57001">
+    <meta name="msapplication-TileColor" content="#c57001">
     
     <!-- Preload critical resources -->
     <link rel="preload" href="style.css" as="style" />
@@ -53,7 +66,7 @@
             <span class="theme-icon" aria-hidden="true">🌙</span>
           </button>
         </div>
-        <p>Consulte aqui o CNPJ da empresa desejada</p>
+        <p>Busque por CNPJ e obtenha informações oficiais da Receita Federal de forma rápida, prática e confiável.</p>
       </header>
 
       <main class="main" role="main">
@@ -64,7 +77,7 @@
             <input
               type="text"
               id="cnpjInput"
-              placeholder="Digite o CNPJ"
+              placeholder="Digite ou cole CNPJ"
               maxlength="18"
               autocomplete="off"
               aria-describedby="cnpjHelp"
@@ -82,7 +95,7 @@
           
           <div class="input-hint">
             <small id="cnpjHelp">
-              Digite os 14 dígitos do CNPJ com ou sem pontuação
+              Digite ou cole os 14 dígitos do CNPJ em qualquer formato (ex: 12.345.678/0001-90)
             </small>
           </div>
           
@@ -126,6 +139,16 @@
               id="tab-btn-completo"
             >
               Dados Completos
+            </button>
+            <button 
+              class="tab-button" 
+              data-tab="exportar"
+              role="tab"
+              aria-selected="false"
+              aria-controls="tab-exportar"
+              id="tab-btn-exportar"
+            >
+              Exportar Pesquisas
             </button>
           </div>
 
@@ -201,35 +224,141 @@
                 </div>
               </div>
             </div>
+
+            <!-- NOVA ABA: EXPORTAR PESQUISAS -->
+            <div 
+              id="tab-exportar" 
+              class="tab-pane"
+              role="tabpanel"
+              aria-labelledby="tab-btn-exportar"
+            >
+              <div class="card">
+                <h2>Exportar Pesquisas</h2>
+                <div class="export-controls">
+                  <div class="export-actions">
+                    <button id="selectAllBtn" class="export-button secondary">
+                      Selecionar Todos
+                    </button>
+                    <button id="deselectAllBtn" class="export-button secondary">
+                      Desmarcar Todos
+                    </button>
+                    <button id="clearAllBtn" class="export-button danger">
+                      🗑️ Limpar Tudo
+                    </button>
+                  </div>
+                  
+                  <div class="export-stats">
+                    <span id="exportStats">0 pesquisas salvas</span>
+                    <span id="selectionStats" class="hidden">0 selecionadas</span>
+                  </div>
+
+                  <div class="download-actions">
+                    <button id="exportExcelBtn" class="export-button primary" disabled>
+                      📥 Excel
+                    </button>
+                    <button id="exportCSVBtn" class="export-button primary" disabled>
+                      📥 CSV
+                    </button>
+                    <button id="exportJSONBtn" class="export-button primary" disabled>
+                      📥 JSON
+                    </button>
+                  </div>
+                </div>
+
+                <div id="exportList" class="export-list">
+                  <div class="empty-state">
+                    <div class="icon">📋</div>
+                    <h3>Nenhuma pesquisa salva</h3>
+                    <p>As pesquisas que você fizer aparecerão aqui automaticamente</p>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </main>
 
+      <!-- Footer Atualizado -->
       <footer class="footer" role="contentinfo">
-        <p>© 2025 CNPJ Finder - Desenvolvido com ajuda da IA</p>
-        <div class="footer-links">
-          <a
-            href="https://linkedin.com/in/itsromulogarcia"
-            target="_blank"
-            class="footer-link"
-            rel="noopener noreferrer"
-          >
-            LinkedIn
-          </a>
-          <a
-            href="https://github.com/itsromulogarcia"
-            target="_blank"
-            class="footer-link"
-            rel="noopener noreferrer"
-          >
-            GitHub
-          </a>
+        <div class="footer-container">
+          <div class="footer-content">
+            <div class="footer-info">
+              <div class="footer-brand">
+                <div class="logo">
+                  <svg
+                    width="24"
+                    height="24"
+                    viewBox="0 0 24 24"
+                    fill="currentColor"
+                    aria-hidden="true"
+                  >
+                    <!-- Ícone personalizado para CNPJ Finder -->
+                    <path
+                      d="M20 6h-4V4c0-1.1-.9-2-2-2h-4c-1.1 0-2 .9-2 2v2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zM10 4h4v2h-4V4zm10 16H4V8h16v12z"
+                    />
+                    <path
+                      d="M8 10h8v2H8zM8 14h8v2H8zM8 18h5v2H8z"
+                    />
+                  </svg>
+                  <span>CNPJ Finder</span>
+                </div>
+                <p class="footer-description">
+                  Plataforma para consulta de dados empresariais. Informações oficiais da Receita Federal de forma rápida, prática e confiável.
+                </p>
+              </div>
+              <p class="footer-copyright">
+                &copy; 2025 CNPJ Finder - Desenvolvido com ajuda da IA.
+              </p>
+            </div>
+            <div class="footer-links">
+              <div class="footer-social">
+                <a
+                  href="https://linkedin.com/in/itsromulogarcia"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="social-link"
+                  aria-label="LinkedIn (abre em nova janela)"
+                >
+                  <svg
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="currentColor"
+                    aria-hidden="true"
+                  >
+                    <path
+                      d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"
+                    />
+                  </svg>
+                  LinkedIn
+                </a>
+                <a
+                  href="https://github.com/itsromulogarcia"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="social-link"
+                  aria-label="GitHub (abre em nova janela)"
+                >
+                  <svg
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="currentColor"
+                    aria-hidden="true"
+                  >
+                    <path
+                      d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"
+                    />
+                  </svg>
+                  GitHub
+                </a>
+              </div>
+            </div>
+          </div>
         </div>
       </footer>
     </div>
 
     <script src="script.js" defer></script>
   </body>
-
 </html>
-
