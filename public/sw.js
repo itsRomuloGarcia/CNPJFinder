@@ -1,9 +1,10 @@
-const CACHE_NAME = 'cnpj-finder-v1.1.1';
+const CACHE_NAME = 'cnpj-finder-v1.2.0';
 const urlsToCache = [
   '/',
+  '/index.html',
   '/style.css',
   '/script.js',
-  '/index.html'
+  '/logo.svg'
 ];
 
 self.addEventListener('install', (event) => {
@@ -41,47 +42,57 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
-  // Estratégia Network First para HTML
-  if (event.request.url.includes('/index.html') || event.request.url === self.location.origin + '/') {
+  const request = event.request;
+  if (request.method !== 'GET') return;
+
+  const url = new URL(request.url);
+  const sameOrigin = url.origin === self.location.origin;
+
+  // API: sempre direto na rede, nunca cacheada (dados precisam estar atualizados)
+  if (sameOrigin && url.pathname.startsWith('/api/')) return;
+
+  if (sameOrigin) {
+    // Arquivos do site: Network First, para que todo deploy chegue aos usuários.
+    // O cache só é usado quando o usuário está offline.
     event.respondWith(
-      fetch(event.request)
+      fetch(request)
         .then((response) => {
-          // Atualiza o cache com a nova versão
-          const responseClone = response.clone();
-          caches.open(CACHE_NAME)
-            .then((cache) => cache.put(event.request, responseClone));
+          if (response && response.status === 200) {
+            const responseClone = response.clone();
+            caches.open(CACHE_NAME)
+              .then((cache) => cache.put(request, responseClone));
+          }
           return response;
         })
-        .catch(() => {
-          // Fallback para cache se offline
-          return caches.match(event.request);
-        })
+        .catch(() =>
+          caches.match(request).then((cached) =>
+            cached || (request.mode === 'navigate' ? caches.match('/') : undefined)
+          )
+        )
     );
-  } else {
-    // Estratégia Cache First para outros recursos
-    event.respondWith(
-      caches.match(event.request)
-        .then((response) => {
-          if (response) {
-            return response;
-          }
-          return fetch(event.request)
-            .then((response) => {
-              // Não cacheamos respostas que não sejam bem-sucedidas
-              if (!response || response.status !== 200) {
-                return response;
-              }
-              // Cache da resposta para uso futuro
-              const responseToCache = response.clone();
-              caches.open(CACHE_NAME)
-                .then((cache) => {
-                  cache.put(event.request, responseToCache);
-                });
-              return response;
-            });
-        })
-    );
+    return;
   }
+
+  // Recursos externos versionados (fontes, SheetJS): Cache First
+  event.respondWith(
+    caches.match(request)
+      .then((cached) => {
+        if (cached) {
+          return cached;
+        }
+        return fetch(request)
+          .then((response) => {
+            // Não cacheamos respostas que não sejam bem-sucedidas
+            if (!response || response.status !== 200) {
+              return response;
+            }
+            const responseToCache = response.clone();
+            caches.open(CACHE_NAME)
+              .then((cache) => cache.put(request, responseToCache));
+            return response;
+          });
+      })
+  );
 });
 
 // Ouvinte para mensagens da página principal

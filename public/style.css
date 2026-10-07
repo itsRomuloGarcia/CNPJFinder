@@ -203,6 +203,56 @@ body {
   line-height: 1.2;
 }
 
+/* Marca cnpjfinder: lupa com prédios + nome em pesos contrastantes */
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3em;
+  letter-spacing: -0.03em;
+}
+
+.header h1.brand {
+  background: none;
+  -webkit-text-fill-color: currentColor;
+  color: #ffffff;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.brand-mark {
+  width: 1.15em;
+  height: 1.15em;
+  flex-shrink: 0;
+  transition: transform var(--transition);
+}
+
+.header .brand-mark {
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.18));
+}
+
+.brand:hover .brand-mark {
+  transform: rotate(-10deg) scale(1.06);
+}
+
+.brand-spark {
+  transform-origin: 38px 8px;
+  animation: brandSpark 3s ease-in-out infinite;
+}
+
+@keyframes brandSpark {
+  0%, 70%, 100% { opacity: 1; transform: scale(1); }
+  80% { opacity: 0.4; transform: scale(0.5); }
+  90% { opacity: 1; transform: scale(1.25); }
+}
+
+.brand-strong {
+  font-weight: 800;
+}
+
+.brand-light {
+  font-weight: 300;
+  opacity: 0.92;
+}
+
 .header p {
   font-size: 1.1rem;
   opacity: 0.95;
@@ -1435,6 +1485,10 @@ body:not(.dark-mode) .footer {
   .logo::after,
   .social-link::before {
     display: none;
+  }
+
+  .brand-spark {
+    animation: none;
   }
   
   .social-link:hover,

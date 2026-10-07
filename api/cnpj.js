@@ -74,9 +74,10 @@ class SecurityMiddleware {
            'unknown';
   }
 
+  // Aceita CNPJ numérico e alfanumérico (IN RFB 2.229/2024, vigente desde jul/2026)
   static sanitizeCNPJ(cnpj) {
     if (typeof cnpj !== 'string') return '';
-    return cnpj.replace(/\D/g, '').substring(0, 14);
+    return cnpj.toUpperCase().replace(/[^0-9A-Z]/g, '').substring(0, 14);
   }
 }
 
@@ -161,45 +162,36 @@ class Logger {
 // VALIDADOR DE CNPJ (SERVER-SIDE)
 // =============================================
 class CNPJValidatorServer {
+  // Cada caractere vale (código ASCII - 48): dígitos 0-9, letras A=17 ... Z=42.
+  // Pesos 2..9 da direita para a esquerda, módulo 11.
+  static calcDV(base) {
+    let soma = 0;
+    let peso = 2;
+    for (let i = base.length - 1; i >= 0; i--) {
+      soma += (base.charCodeAt(i) - 48) * peso;
+      peso = peso === 9 ? 2 : peso + 1;
+    }
+    const resto = soma % 11;
+    return resto < 2 ? 0 : 11 - resto;
+  }
+
   static validate(cnpj) {
-    const cleaned = cnpj.replace(/\D/g, '');
-    
+    const cleaned = cnpj.toUpperCase().replace(/[^0-9A-Z]/g, '');
+
     if (cleaned.length !== 14) {
-      return { isValid: false, error: 'CNPJ deve conter 14 dígitos' };
+      return { isValid: false, error: 'CNPJ deve conter 14 caracteres' };
+    }
+
+    if (!/^[0-9A-Z]{12}\d{2}$/.test(cleaned)) {
+      return { isValid: false, error: 'CNPJ inválido' };
     }
 
     if (/^(\d)\1+$/.test(cleaned)) {
       return { isValid: false, error: 'CNPJ inválido' };
     }
 
-    let tamanho = cleaned.length - 2;
-    let numeros = cleaned.substring(0, tamanho);
-    let digitos = cleaned.substring(tamanho);
-    let soma = 0;
-    let pos = tamanho - 7;
-
-    for (let i = tamanho; i >= 1; i--) {
-      soma += numeros.charAt(tamanho - i) * pos--;
-      if (pos < 2) pos = 9;
-    }
-
-    let resultado = soma % 11 < 2 ? 0 : 11 - (soma % 11);
-    if (resultado !== parseInt(digitos.charAt(0))) {
-      return { isValid: false, error: 'CNPJ inválido' };
-    }
-
-    tamanho = tamanho + 1;
-    numeros = cleaned.substring(0, tamanho);
-    soma = 0;
-    pos = tamanho - 7;
-
-    for (let i = tamanho; i >= 1; i--) {
-      soma += numeros.charAt(tamanho - i) * pos--;
-      if (pos < 2) pos = 9;
-    }
-
-    resultado = soma % 11 < 2 ? 0 : 11 - (soma % 11);
-    if (resultado !== parseInt(digitos.charAt(1))) {
+    if (this.calcDV(cleaned.substring(0, 12)) !== Number(cleaned[12]) ||
+        this.calcDV(cleaned.substring(0, 13)) !== Number(cleaned[13])) {
       return { isValid: false, error: 'CNPJ inválido' };
     }
 
@@ -233,7 +225,9 @@ class ExternalAPIClient {
 
       if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`API externa retornou status ${response.status}: ${errorText}`);
+        const error = new Error(`API externa retornou status ${response.status}: ${errorText}`);
+        error.status = response.status;
+        throw error;
       }
 
       const data = await response.json();
@@ -349,8 +343,14 @@ class DataMapper {
       state: estabelecimento.estado?.sigla,
       zip: estabelecimento.cep,
       country: estabelecimento.pais?.nome,
-      municipality: estabelecimento.cidade?.nome,
+      municipality: estabelecimento.cidade?.ibge_id ? String(estabelecimento.cidade.ibge_id) : null,
     };
+  }
+
+  // Celular no Brasil: 9 dígitos começando com 9
+  static phoneType(number) {
+    const digits = String(number).replace(/\D/g, '');
+    return digits.length === 9 && digits.startsWith('9') ? 'MOBILE' : 'LANDLINE';
   }
 
   static mapPhones(estabelecimento) {
@@ -360,7 +360,7 @@ class DataMapper {
       phones.push({
         area: estabelecimento.ddd1,
         number: estabelecimento.telefone1,
-        type: 'LANDLINE',
+        type: this.phoneType(estabelecimento.telefone1),
       });
     }
 
@@ -368,7 +368,7 @@ class DataMapper {
       phones.push({
         area: estabelecimento.ddd2,
         number: estabelecimento.telefone2,
-        type: 'LANDLINE',
+        type: this.phoneType(estabelecimento.telefone2),
       });
     }
 
@@ -408,7 +408,6 @@ class DataMapper {
     if (!inscricoes || !Array.isArray(inscricoes)) return [];
 
     return inscricoes.map(ie => ({
-      type: { id: 1, text: 'Normal' },
       number: ie.inscricao_estadual,
       state: ie.estado?.sigla,
       enabled: ie.ativo,
@@ -460,6 +459,7 @@ export default async function handler(req, res) {
     
     if (!SecurityMiddleware.checkRateLimit(clientIP, sanitizedCNPJ)) {
       Logger.warn('Rate limit excedido', { ip: clientIP, cnpj: sanitizedCNPJ });
+      res.setHeader('Retry-After', '60');
       return res.status(429).json({
         error: true,
         message: 'Limite de requisições excedido. Tente novamente em 1 minuto.',
@@ -519,12 +519,14 @@ export default async function handler(req, res) {
     if (error.message.includes('Timeout')) {
       statusCode = 408;
       errorMessage = 'Timeout na consulta externa';
-    } else if (error.message.includes('404') || error.message.includes('não encontrado')) {
+    } else if (error.status === 404 || error.status === 400 || error.status === 422 ||
+               error.message.includes('não encontrado')) {
       statusCode = 404;
       errorMessage = 'Empresa não encontrada';
-    } else if (error.message.includes('429')) {
+    } else if (error.status === 429) {
       statusCode = 429;
       errorMessage = 'API externa com limite excedido';
+      res.setHeader('Retry-After', '60');
     } else if (error.message.includes('Failed to fetch') || error.message.includes('Network')) {
       statusCode = 503;
       errorMessage = 'Serviço temporariamente indisponível';

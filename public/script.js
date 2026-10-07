@@ -14,7 +14,7 @@ const CONFIG = {
   RATE_LIMIT_DELAY: 60000, // 60 segundos padrão
   AUTO_RETRY_ENABLED: true, // Se deve retornar automaticamente
   // Versão do app para controle de cache
-  APP_VERSION: '1.1.1'
+  APP_VERSION: '1.2.0'
 };
 
 // =============================================
@@ -156,57 +156,53 @@ class RateLimitManager {
 // =============================================
 // VALIDAÇÃO DE CNPJ (ALGORITMO OFICIAL)
 // =============================================
+// Suporta CNPJ numérico e alfanumérico (IN RFB 2.229/2024, vigente desde jul/2026):
+// 12 primeiras posições [0-9A-Z] + 2 dígitos verificadores numéricos.
 class CNPJValidator {
   static clean(cnpj) {
-    return cnpj.replace(/\D/g, "");
+    return String(cnpj || "")
+      .toUpperCase()
+      .replace(/^\s*CNPJ\s*[:\-]?/, "") // texto colado como "CNPJ: 12.345..."
+      .replace(/[^0-9A-Z]/g, "");
   }
 
   static format(cnpj) {
     const cleaned = this.clean(cnpj);
     if (cleaned.length !== 14) return cnpj;
-    
-    return cleaned.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, "$1.$2.$3/$4-$5");
+
+    return cleaned.replace(/^(.{2})(.{3})(.{3})(.{4})(.{2})$/, "$1.$2.$3/$4-$5");
+  }
+
+  // Cada caractere vale (código ASCII - 48): dígitos 0-9, letras A=17 ... Z=42.
+  // Pesos 2..9 da direita para a esquerda, módulo 11.
+  static calcDV(base) {
+    let soma = 0;
+    let peso = 2;
+    for (let i = base.length - 1; i >= 0; i--) {
+      soma += (base.charCodeAt(i) - 48) * peso;
+      peso = peso === 9 ? 2 : peso + 1;
+    }
+    const resto = soma % 11;
+    return resto < 2 ? 0 : 11 - resto;
   }
 
   static validate(cnpj) {
     const cleaned = this.clean(cnpj);
-    
+
     if (cleaned.length !== 14) {
-      return { isValid: false, error: "CNPJ deve conter 14 dígitos" };
+      return { isValid: false, error: "CNPJ deve conter 14 caracteres" };
+    }
+
+    if (!/^[0-9A-Z]{12}\d{2}$/.test(cleaned)) {
+      return { isValid: false, error: "Os dois últimos caracteres do CNPJ devem ser números" };
     }
 
     if (/^(\d)\1+$/.test(cleaned)) {
       return { isValid: false, error: "CNPJ com dígitos repetidos é inválido" };
     }
 
-    let tamanho = cleaned.length - 2;
-    let numeros = cleaned.substring(0, tamanho);
-    let digitos = cleaned.substring(tamanho);
-    let soma = 0;
-    let pos = tamanho - 7;
-
-    for (let i = tamanho; i >= 1; i--) {
-      soma += numeros.charAt(tamanho - i) * pos--;
-      if (pos < 2) pos = 9;
-    }
-
-    let resultado = soma % 11 < 2 ? 0 : 11 - (soma % 11);
-    if (resultado !== parseInt(digitos.charAt(0))) {
-      return { isValid: false, error: "Dígito verificador inválido" };
-    }
-
-    tamanho = tamanho + 1;
-    numeros = cleaned.substring(0, tamanho);
-    soma = 0;
-    pos = tamanho - 7;
-
-    for (let i = tamanho; i >= 1; i--) {
-      soma += numeros.charAt(tamanho - i) * pos--;
-      if (pos < 2) pos = 9;
-    }
-
-    resultado = soma % 11 < 2 ? 0 : 11 - (soma % 11);
-    if (resultado !== parseInt(digitos.charAt(1))) {
+    if (this.calcDV(cleaned.substring(0, 12)) !== Number(cleaned[12]) ||
+        this.calcDV(cleaned.substring(0, 13)) !== Number(cleaned[13])) {
       return { isValid: false, error: "Dígito verificador inválido" };
     }
 
@@ -291,13 +287,22 @@ class SearchHistoryManager {
 // GERENCIADOR DE EXPORTAÇÃO ATUALIZADO - DADOS COMPLETOS
 // =============================================
 class ExportManager {
+  // Separador ";" e BOM UTF-8: padrão que o Excel em português abre direto,
+  // com colunas e acentos corretos.
   static exportToCSV(selections) {
     if (!selections || selections.length === 0) return null;
 
+    const escape = (value) => {
+      const text = String(value ?? '');
+      return /[";\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+    };
+
     const headers = this.getAllHeaders();
-    const rows = selections.map(item => this.formatRowData(item));
-    const csvContent = [headers.join(','), ...rows].join('\n');
-    return csvContent;
+    const rows = selections.map(item => {
+      const row = this.formatRowData(item);
+      return headers.map(header => escape(row[header])).join(';');
+    });
+    return '﻿' + [headers.map(escape).join(';'), ...rows].join('\r\n');
   }
 
   static exportToJSON(selections) {
@@ -353,7 +358,6 @@ class ExportManager {
 
   static formatRowData(item, forExcel = false) {
     const data = item.data;
-    const iePrincipal = this.getPrincipalIE(data.registrations);
     const capitalSocial = data.company?.equity ? `R$ ${Formatters.currency(data.company.equity)}` : '';
     
     // Formatando listas
@@ -372,7 +376,8 @@ class ExportManager {
       : '';
 
     return {
-      'CNPJ': data.taxId || '',
+      // Formatado para o Excel não converter em número e perder zeros à esquerda
+      'CNPJ': data.taxId ? Formatters.CNPJ(data.taxId) : '',
       'Razão Social': data.company?.name || '',
       'Nome Fantasia': data.alias || '',
       'Situação Cadastral': data.status?.text || '',
@@ -394,7 +399,7 @@ class ExportManager {
       'Cidade': data.address?.city || '',
       'Estado': data.address?.state || '',
       'CEP': Formatters.CEP(data.address?.zip) || '',
-      'País': data.address?.country?.name || '',
+      'País': Formatters.country(data.address?.country),
       'Telefones': this.formatPhones(data.phones),
       'Emails': this.getPrimaryEmail(data.emails),
       'CNAE Principal': data.mainActivity?.text || '',
@@ -444,17 +449,6 @@ class ExportManager {
     return (corporateEmail || emails[0])?.address || '';
   }
 
-  static getPrincipalIE(registrations) {
-    if (!registrations || !Array.isArray(registrations)) return '';
-
-    const ieNormal = registrations.find(reg => reg.type?.id === 1);
-    if (ieNormal) return `${ieNormal.number} (${ieNormal.state})`;
-
-    const primeira = registrations[0];
-    if (primeira) return `${primeira.number} (${primeira.state})`;
-
-    return '';
-  }
 }
 
 // =============================================
@@ -537,7 +531,10 @@ class ApiManager {
           const waitTime = retryAfter ? parseInt(retryAfter) : 60;
           throw new Error(`RATE_LIMIT:${waitTime}`);
         }
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        const body = await response.json().catch(() => null);
+        const error = new Error(body?.message || `HTTP ${response.status}: ${response.statusText}`);
+        error.status = response.status;
+        throw error;
       }
 
       const data = await response.json();
@@ -588,26 +585,27 @@ class Formatters {
     return phone;
   }
 
+  // "AAAA-MM-DD" é interpretado como UTC pelo new Date(), o que no fuso
+  // do Brasil exibe o dia anterior. Datas puras viram data local.
+  static parseDate(value) {
+    if (!value) return null;
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value));
+    const date = match
+      ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+      : new Date(value);
+    return isNaN(date.getTime()) ? null : date;
+  }
+
   static date(dateString) {
     if (!dateString) return "";
-    try {
-      const date = new Date(dateString);
-      return date.toLocaleDateString("pt-BR");
-    } catch (e) {
-      console.warn("Erro ao formatar data:", dateString, e);
-      return dateString;
-    }
+    const date = this.parseDate(dateString);
+    return date ? date.toLocaleDateString("pt-BR") : String(dateString);
   }
 
   static dateTime(dateTimeString) {
     if (!dateTimeString) return "";
-    try {
-      const date = new Date(dateTimeString);
-      return date.toLocaleString("pt-BR");
-    } catch (e) {
-      console.warn("Erro ao formatar data/hora:", dateTimeString, e);
-      return dateTimeString;
-    }
+    const date = this.parseDate(dateTimeString);
+    return date ? date.toLocaleString("pt-BR") : String(dateTimeString);
   }
 
   static currency(value) {
@@ -625,6 +623,12 @@ class Formatters {
       console.warn("Erro ao formatar moeda:", value, e);
       return "0,00";
     }
+  }
+
+  // A API devolve o país como texto; históricos antigos podem ter objeto { name }
+  static country(country) {
+    if (!country) return "";
+    return typeof country === "string" ? country : country.name || "";
   }
 
   static time(seconds) {
@@ -863,7 +867,7 @@ class UIManager {
             <span class="checkmark"></span>
           </label>
           <div class="export-info">
-            <div class="export-company">${companyName}</div>
+            <div class="export-company">${this.escapeHtml(companyName)}</div>
             <div class="export-cnpj">${formattedCNPJ}</div>
             <div class="export-date">Consultado em: ${Formatters.dateTime(item.timestamp)}</div>
           </div>
@@ -944,7 +948,7 @@ class UIManager {
         case 'csv':
           content = ExportManager.exportToCSV(selections);
           filename = `cnpj_pesquisas_${new Date().toISOString().split('T')[0]}.csv`;
-          mimeType = 'text/csv';
+          mimeType = 'text/csv;charset=utf-8';
           ExportManager.downloadFile(content, filename, mimeType);
           this.showNotification('Arquivo CSV baixado com sucesso!', 'success');
           break;
@@ -1030,29 +1034,20 @@ class UIManager {
     const cursorPosition = input.selectionStart;
     const originalLength = input.value.length;
     
-    let value = input.value.replace(/\D/g, "");
-    
-    if (value.length <= 14) {
-      if (value.length > 12) {
-        value = value.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, "$1.$2.$3/$4-$5");
-      } else if (value.length > 8) {
-        value = value.replace(/(\d{2})(\d{3})(\d{3})(\d{0,4})/, "$1.$2.$3/$4");
-      } else if (value.length > 5) {
-        value = value.replace(/(\d{2})(\d{3})(\d{0,3})/, "$1.$2.$3");
-      } else if (value.length > 2) {
-        value = value.replace(/(\d{2})(\d{0,3})/, "$1.$2");
-      }
-    } else {
-      value = value.substring(0, 14);
-      value = value.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, "$1.$2.$3/$4-$5");
-    }
-    
+    const raw = CNPJValidator.clean(input.value).substring(0, 14);
+
+    let value = raw.substring(0, 2);
+    if (raw.length > 2) value += "." + raw.substring(2, 5);
+    if (raw.length > 5) value += "." + raw.substring(5, 8);
+    if (raw.length > 8) value += "/" + raw.substring(8, 12);
+    if (raw.length > 12) value += "-" + raw.substring(12, 14);
+
     input.value = value;
     
     const newLength = input.value.length;
     const lengthDiff = newLength - originalLength;
-    const newCursorPosition = cursorPosition + lengthDiff;
-    
+    const newCursorPosition = Math.max(0, cursorPosition + lengthDiff);
+
     input.setSelectionRange(newCursorPosition, newCursorPosition);
   }
 
@@ -1111,7 +1106,7 @@ class UIManager {
       if (error.message.startsWith('RATE_LIMIT:')) {
         const waitTime = parseInt(error.message.split(':')[1]);
         this.showRateLimitError(waitTime);
-      } else if (appState.retryCount < CONFIG.MAX_RETRIES) {
+      } else if (this.isRetryable(error) && appState.retryCount < CONFIG.MAX_RETRIES) {
         appState.retryCount++;
         console.log(`🔄 Tentativa ${appState.retryCount} de ${CONFIG.MAX_RETRIES}`);
         
@@ -1130,12 +1125,20 @@ class UIManager {
     }
   }
 
+  // Só vale tentar de novo em falha de rede, timeout ou erro do servidor (5xx).
+  // Erros 4xx (CNPJ inexistente, inválido) dariam o mesmo resultado e
+  // consumiriam o limite de consultas à toa.
+  isRetryable(error) {
+    if (!error.status) return true;
+    return error.status === 408 || error.status >= 500;
+  }
+
   getErrorMessage(error) {
     const message = error.message || "Erro desconhecido";
-    
-    if (message.includes("Tempo limite")) {
+
+    if (message.includes("Tempo limite") || error.status === 408) {
       return "A consulta demorou muito tempo. Tente novamente.";
-    } else if (message.includes("404") || message.includes("não encontrada")) {
+    } else if (error.status === 404 || message.includes("404") || message.includes("não encontrada")) {
       return "Empresa não encontrada para o CNPJ informado.";
     } else if (message.includes("Failed to fetch")) {
       return "Erro de conexão. Verifique sua internet e tente novamente.";
@@ -1322,7 +1325,7 @@ class UIManager {
       { label: "Cidade", value: data.address.city },
       { label: "Estado", value: data.address.state },
       { label: "CEP", value: Formatters.CEP(data.address.zip) },
-      { label: "País", value: data.address.country?.name },
+      { label: "País", value: Formatters.country(data.address.country) },
       { label: "Código Município", value: data.address.municipality }
     ].filter(field => field.value);
 
@@ -1382,7 +1385,7 @@ class UIManager {
     if (data.registrations && data.registrations.length > 0) {
       const ies = data.registrations.map(reg => {
         const status = reg.enabled ? "✅" : "❌";
-        return `${status} ${reg.number} - ${reg.state} (${reg.type?.text}) - ${reg.status?.text}`;
+        return `${status} ${reg.number} - ${reg.state} - ${reg.status?.text}`;
       });
       fields.push({ label: "Inscrições Estaduais", value: ies });
     }
@@ -1710,6 +1713,9 @@ function initializeApp() {
   
   loadSavedTheme();
   setupServiceWorker();
+
+  const yearElement = document.getElementById("currentYear");
+  if (yearElement) yearElement.textContent = new Date().getFullYear();
   
   console.log("✅ Aplicação inicializada com sucesso - Versão:", CONFIG.APP_VERSION);
 }
