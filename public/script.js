@@ -679,6 +679,7 @@ class UIManager {
     return {
       cnpjInput: document.getElementById("cnpjInput"),
       searchBtn: document.getElementById("searchBtn"),
+      clearBtn: document.getElementById("clearBtn"),
       errorMessage: document.getElementById("errorMessage"),
       loading: document.getElementById("loading"),
       result: document.getElementById("result"),
@@ -726,10 +727,22 @@ class UIManager {
       }
     });
 
+    // Esc limpa a pesquisa
+    this.elements.cnpjInput.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        this.clearSearch();
+      }
+    });
+
     // Input com debounce e formatação automática
     this.elements.cnpjInput.addEventListener("input", (e) => {
       this.handleInputFormat(e);
+      this.updateClearButton();
     });
+
+    // Botão limpar
+    this.elements.clearBtn.addEventListener("click", () => this.clearSearch());
 
     // Toggle de tema
     this.elements.themeToggle.addEventListener("click", () => this.toggleTheme());
@@ -760,6 +773,7 @@ class UIManager {
       const item = e.target.closest(".recent-item");
       if (!item) return;
       this.elements.cnpjInput.value = Formatters.CNPJ(item.dataset.cnpj);
+      this.updateClearButton();
       Telemetry.trackEvent('recent_search_clicked');
       this.handleSearch();
     });
@@ -1721,28 +1735,62 @@ class UIManager {
     
     const firstTab = document.querySelector('.tab-button');
     if (firstTab) firstTab.focus();
+    this.updateClearButton();
   }
 
   hideResult() {
     this.elements.result.classList.add("hidden");
+    this.updateClearButton();
   }
 
   showError(message) {
     this.elements.errorMessage.textContent = message;
     this.elements.errorMessage.classList.remove("hidden");
     this.elements.errorMessage.focus();
-    
+    this.updateClearButton();
+
     Telemetry.trackEvent('error_displayed', { message: message });
   }
 
   clearError() {
     this.elements.errorMessage.textContent = "";
     this.elements.errorMessage.classList.add("hidden");
+    this.updateClearButton();
+  }
+
+  // O "×" aparece quando há algo para limpar: texto, resultado ou erro
+  updateClearButton() {
+    const hasContent = this.elements.cnpjInput.value.trim() !== "" ||
+                       !this.elements.result.classList.contains("hidden") ||
+                       !this.elements.errorMessage.classList.contains("hidden");
+    this.elements.clearBtn.classList.toggle("hidden", !hasContent);
+  }
+
+  // Volta à tela inicial: limpa campo, resultado e erro e mostra as consultas recentes
+  clearSearch() {
+    if (appState.isLoading) return;
+
+    this.elements.cnpjInput.value = "";
+    this.hideResult();
+    // Durante o bloqueio por limite de consultas, o aviso com o contador permanece
+    if (!RateLimitManager.isRateLimited()) {
+      this.clearError();
+    }
+    this.elements.summaryCard.innerHTML = "";
+    appState.setLastSearch(null);
+    appState.clearPendingSearch();
+
+    this.renderRecentSearches();
+    this.updateClearButton();
+    if (!this.elements.cnpjInput.disabled) this.elements.cnpjInput.focus();
+
+    Telemetry.trackEvent('search_cleared');
   }
 
   disableSearchButton(disabled) {
     this.elements.searchBtn.disabled = disabled;
     this.elements.cnpjInput.disabled = disabled;
+    this.elements.clearBtn.disabled = disabled;
     const buttonText = this.elements.searchBtn.querySelector(".button-text");
     const buttonLoading = this.elements.searchBtn.querySelector(".button-loading");
 

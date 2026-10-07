@@ -302,13 +302,15 @@ class DataMapper {
     if (!value) return 0;
     
     try {
-      return parseFloat(
-        value
-          .replace('R$', '')
-          .replace(/\./g, '')
-          .replace(',', '.')
-          .trim()
-      ) || 0;
+      if (typeof value === 'number') return value;
+      const text = String(value).replace('R$', '').trim();
+      // A API devolve "120000000000.00" (ponto decimal). Só trata como formato
+      // brasileiro ("1.234,56") quando houver vírgula; senão o ".00" virava
+      // parte do número e o capital aparecia 100x maior.
+      const normalized = text.includes(',')
+        ? text.replace(/\./g, '').replace(',', '.')
+        : text;
+      return parseFloat(normalized) || 0;
     } catch (error) {
       Logger.warn('Erro ao parsear valor monetário', { value, error: error.message });
       return 0;

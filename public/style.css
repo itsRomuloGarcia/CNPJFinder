@@ -1998,9 +1998,65 @@ button.partner-more:focus-visible {
   white-space: nowrap;
 }
 
+/* Botão limpar (×) dentro do campo de busca */
+.input-wrapper {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+
+.input-wrapper input {
+  width: 100%;
+  padding-right: 56px;
+}
+
+.clear-button {
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.clear-button:hover,
+.clear-button:focus-visible {
+  color: var(--primary-color);
+  background: rgba(var(--primary-rgb), 0.12);
+  outline: none;
+}
+
+.clear-button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* O input sobe 1px no foco; o × acompanha */
+.input-wrapper input:focus + .clear-button {
+  transform: translateY(calc(-50% - 1px));
+}
+
+@media (max-width: 767px) {
+  .input-wrapper {
+    width: 100%;
+  }
+}
+
 @media print {
   .copy-btn,
-  .recent-searches {
+  .recent-searches,
+  .clear-button {
     display: none !important;
   }
 }
