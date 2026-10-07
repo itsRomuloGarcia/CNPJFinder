@@ -14,7 +14,7 @@ const CONFIG = {
   RATE_LIMIT_DELAY: 60000, // 60 segundos padrão
   AUTO_RETRY_ENABLED: true, // Se deve retornar automaticamente
   // Versão do app para controle de cache
-  APP_VERSION: '1.2.0'
+  APP_VERSION: '1.3.0'
 };
 
 // =============================================
@@ -383,7 +383,7 @@ class ExportManager {
       'Situação Cadastral': data.status?.text || '',
       'Data Abertura': Formatters.date(data.founded) || '',
       'Data Situação Cadastral': Formatters.date(data.statusDate) || '',
-      'Data Última Atualização': Formatters.dateTime(data.updated) || '',
+      'Data Última Atualização': Formatters.date(data.updated) || '',
       'Matriz/Filial': data.head ? 'Matriz' : 'Filial',
       'Natureza Jurídica': data.company?.nature?.text || '',
       'Porte Empresa': data.company?.size?.text || '',
@@ -625,6 +625,33 @@ class Formatters {
     }
   }
 
+  // CNAE "6422100" -> "6422-1/00"
+  static cnae(id) {
+    const digits = String(id ?? "").replace(/\D/g, "");
+    return digits.length === 7
+      ? digits.replace(/(\d{4})(\d)(\d{2})/, "$1-$2/$3")
+      : String(id ?? "");
+  }
+
+  static yearsSince(dateString) {
+    const date = this.parseDate(dateString);
+    if (!date) return null;
+    const now = new Date();
+    let years = now.getFullYear() - date.getFullYear();
+    if (now < new Date(now.getFullYear(), date.getMonth(), date.getDate())) years--;
+    return years;
+  }
+
+  static relativeDate(dateString) {
+    const date = this.parseDate(dateString);
+    if (!date) return "";
+    const days = Math.floor((Date.now() - date.getTime()) / 86400000);
+    if (days <= 0) return "hoje";
+    if (days === 1) return "ontem";
+    if (days < 30) return `há ${days} dias`;
+    return this.date(dateString);
+  }
+
   // A API devolve o país como texto; históricos antigos podem ter objeto { name }
   static country(country) {
     if (!country) return "";
@@ -659,6 +686,9 @@ class UIManager {
       partnersList: document.getElementById("partnersList"),
       themeToggle: document.getElementById("themeToggle"),
       completeData: document.getElementById("completeData"),
+      summaryCard: document.getElementById("summaryCard"),
+      recentSearches: document.getElementById("recentSearches"),
+      recentList: document.getElementById("recentList"),
       
       // Elementos de exportação
       exportList: document.getElementById("exportList"),
@@ -682,6 +712,7 @@ class UIManager {
     this.initializeTelemetry();
     this.initializeRateLimitCheck();
     this.loadExportHistory();
+    this.renderRecentSearches();
   }
 
   bindEvents() {
@@ -717,6 +748,21 @@ class UIManager {
     this.elements.exportExcelBtn.addEventListener("click", () => this.handleExport('excel'));
     this.elements.exportCSVBtn.addEventListener("click", () => this.handleExport('csv'));
     this.elements.exportJSONBtn.addEventListener("click", () => this.handleExport('json'));
+
+    // Botões de copiar (criados dinamicamente)
+    document.addEventListener("click", (e) => {
+      const copyButton = e.target.closest(".copy-btn");
+      if (copyButton) this.handleCopy(copyButton);
+    });
+
+    // Consultas recentes
+    this.elements.recentList.addEventListener("click", (e) => {
+      const item = e.target.closest(".recent-item");
+      if (!item) return;
+      this.elements.cnpjInput.value = Formatters.CNPJ(item.dataset.cnpj);
+      Telemetry.trackEvent('recent_search_clicked');
+      this.handleSearch();
+    });
 
     // Focar no input ao carregar
     this.elements.cnpjInput.focus();
@@ -901,6 +947,7 @@ class UIManager {
       SearchHistoryManager.clearHistory();
       appState.deselectAllExport();
       this.loadExportHistory();
+      this.renderRecentSearches();
       this.showNotification('Todas as pesquisas foram removidas', 'success');
       Telemetry.trackEvent('history_cleared');
     }
@@ -1087,7 +1134,8 @@ class UIManager {
       console.log("✅ Dados recebidos com sucesso");
 
       SearchHistoryManager.saveToHistory(cnpj, data);
-      
+      this.renderRecentSearches();
+
       this.displayData(data);
       appState.setLastSearch(cnpj);
       appState.retryCount = 0;
@@ -1118,6 +1166,7 @@ class UIManager {
       }
     } finally {
       this.hideLoading();
+      this.renderRecentSearches();
       if (!RateLimitManager.isRateLimited()) {
         this.disableSearchButton(false);
       }
@@ -1155,9 +1204,11 @@ class UIManager {
 
     console.log("📊 Exibindo dados:", data);
 
+    this.displaySummary(data);
     this.displayCompleteData(data);
     this.displayPartners(data.company?.members);
 
+    this.switchTab('completo');
     this.showResult();
 
     Telemetry.trackEvent('data_displayed', {
@@ -1166,7 +1217,159 @@ class UIManager {
     });
   }
 
+  // =============================================
+  // CARD DE RESUMO
+  // =============================================
+
+  createElement(tag, className, text) {
+    const element = document.createElement(tag);
+    if (className) element.className = className;
+    if (text !== undefined && text !== null) element.textContent = text;
+    return element;
+  }
+
+  getStatusVariant(statusText) {
+    const status = String(statusText || "").toUpperCase();
+    if (status.includes("ATIVA")) return "success";
+    if (status.includes("SUSPENSA")) return "warning";
+    if (status.includes("BAIXADA") || status.includes("INAPTA") || status.includes("NULA")) return "error";
+    return "neutral";
+  }
+
+  createBadge(text, variant = "neutral") {
+    return this.createElement("span", `badge badge-${variant}`, text);
+  }
+
+  createCopyButton(value, label) {
+    const button = this.createElement("button", "copy-btn");
+    button.type = "button";
+    button.dataset.copy = value;
+    button.setAttribute("aria-label", `Copiar ${label}`);
+    button.title = `Copiar ${label}`;
+    button.innerHTML = `
+      <svg class="copy-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></svg>
+      <svg class="check-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>
+    `;
+    return button;
+  }
+
+  async handleCopy(button) {
+    const text = button.dataset.copy || "";
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const textarea = document.createElement("textarea");
+        textarea.value = text;
+        textarea.style.cssText = "position:fixed;opacity:0";
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        textarea.remove();
+      }
+      button.classList.add("copied");
+      this.announceToScreenReader("Copiado");
+      setTimeout(() => button.classList.remove("copied"), 1500);
+      Telemetry.trackEvent('value_copied', { field: button.getAttribute("aria-label") });
+    } catch (error) {
+      this.showNotification("Não foi possível copiar", "error");
+    }
+  }
+
+  displaySummary(data) {
+    const card = this.elements.summaryCard;
+    card.innerHTML = "";
+
+    const main = this.createElement("div", "summary-main");
+
+    const badges = this.createElement("div", "summary-badges");
+    if (data.status?.text) {
+      const variant = this.getStatusVariant(data.status.text);
+      const badge = this.createBadge(data.status.text, variant);
+      badge.prepend(this.createElement("span", "badge-dot"));
+      badges.appendChild(badge);
+    }
+    badges.appendChild(this.createBadge(data.head ? "Matriz" : "Filial"));
+    if (data.company?.simei?.optant) badges.appendChild(this.createBadge("MEI", "info"));
+    else if (data.company?.simples?.optant) badges.appendChild(this.createBadge("Simples Nacional", "info"));
+    if (data.company?.size?.text) badges.appendChild(this.createBadge(data.company.size.text));
+    main.appendChild(badges);
+
+    const nameRow = this.createElement("div", "summary-name-row");
+    nameRow.appendChild(this.createElement("h2", "summary-name", data.company?.name || "Razão social não informada"));
+    if (data.company?.name) nameRow.appendChild(this.createCopyButton(data.company.name, "razão social"));
+    main.appendChild(nameRow);
+
+    if (data.alias) {
+      main.appendChild(this.createElement("p", "summary-alias", data.alias));
+    }
+
+    const cnpjRow = this.createElement("div", "summary-cnpj");
+    const formattedCNPJ = Formatters.CNPJ(data.taxId);
+    cnpjRow.appendChild(this.createElement("span", null, formattedCNPJ));
+    cnpjRow.appendChild(this.createCopyButton(formattedCNPJ, "CNPJ"));
+    main.appendChild(cnpjRow);
+
+    card.appendChild(main);
+
+    const facts = this.createElement("dl", "summary-facts");
+    const addFact = (label, value, wide = false) => {
+      if (!value) return;
+      const fact = this.createElement("div", wide ? "summary-fact summary-fact-wide" : "summary-fact");
+      fact.appendChild(this.createElement("dt", null, label));
+      fact.appendChild(this.createElement("dd", null, value));
+      facts.appendChild(fact);
+    };
+
+    const years = Formatters.yearsSince(data.founded);
+    addFact("Abertura", data.founded
+      ? `${Formatters.date(data.founded)}${years !== null ? ` · ${years} ${years === 1 ? "ano" : "anos"}` : ""}`
+      : null);
+    addFact("Localização", [data.address?.city, data.address?.state].filter(Boolean).join("/"));
+    addFact("Atividade principal", data.mainActivity
+      ? `${Formatters.cnae(data.mainActivity.id)} · ${data.mainActivity.text}`
+      : null, true);
+    addFact("Capital social", data.company?.equity
+      ? `R$ ${Formatters.currency(data.company.equity)}`
+      : null, true);
+
+    if (facts.children.length > 0) card.appendChild(facts);
+  }
+
+  // =============================================
+  // CONSULTAS RECENTES
+  // =============================================
+
+  renderRecentSearches() {
+    const list = this.elements.recentList;
+    const history = SearchHistoryManager.getHistoryList()
+      .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+      .slice(0, 6);
+
+    list.innerHTML = "";
+    history.forEach(item => {
+      const button = this.createElement("button", "recent-item");
+      button.type = "button";
+      button.dataset.cnpj = item.cnpj;
+      button.appendChild(this.createElement("span", "recent-name", item.companyName || "Nome não disponível"));
+      const meta = this.createElement("span", "recent-meta");
+      meta.appendChild(this.createElement("span", null, Formatters.CNPJ(item.cnpj)));
+      meta.appendChild(this.createElement("span", "recent-date", Formatters.relativeDate(item.timestamp)));
+      button.appendChild(meta);
+      list.appendChild(button);
+    });
+
+    const isBusy = !this.elements.result.classList.contains("hidden") ||
+                   !this.elements.loading.classList.contains("hidden");
+    this.elements.recentSearches.classList.toggle("hidden", history.length === 0 || isBusy);
+  }
+
+  // =============================================
+  // SÓCIOS
+  // =============================================
+
   displayPartners(members) {
+    const INITIAL_COUNT = 6;
     this.elements.partnersList.innerHTML = "";
 
     if (!members || members.length === 0) {
@@ -1174,63 +1377,54 @@ class UIManager {
       return;
     }
 
-    console.log("👥 Exibindo sócios:", members);
-
     const sortedMembers = [...members].sort((a, b) => {
-      try {
-        const dateA = a.since ? new Date(a.since) : new Date(0);
-        const dateB = b.since ? new Date(b.since) : new Date(0);
-        return dateB - dateA;
-      } catch (e) {
-        return 0;
-      }
+      const dateA = Formatters.parseDate(a.since) || new Date(0);
+      const dateB = Formatters.parseDate(b.since) || new Date(0);
+      return dateB - dateA;
     });
 
-    const displayedMembers = sortedMembers.slice(0, 6);
-
-    displayedMembers.forEach(member => {
+    sortedMembers.forEach((member, index) => {
       const partnerItem = this.createPartnerElement(member);
+      if (index >= INITIAL_COUNT) partnerItem.classList.add("hidden");
       this.elements.partnersList.appendChild(partnerItem);
     });
 
-    if (sortedMembers.length > 6) {
-      const morePartners = document.createElement("div");
-      morePartners.className = "partner-more";
-      morePartners.textContent = `+ ${sortedMembers.length - 6} outros sócios...`;
-      this.elements.partnersList.appendChild(morePartners);
+    if (sortedMembers.length > INITIAL_COUNT) {
+      const showAll = this.createElement("button", "partner-more",
+        `Mostrar todos os ${sortedMembers.length} sócios`);
+      showAll.type = "button";
+      showAll.addEventListener("click", () => {
+        this.elements.partnersList
+          .querySelectorAll(".partner-item.hidden")
+          .forEach(item => item.classList.remove("hidden"));
+        showAll.remove();
+      });
+      this.elements.partnersList.appendChild(showAll);
     }
 
     this.elements.partnersCard.classList.remove("hidden");
   }
 
   createPartnerElement(member) {
-    const partnerItem = document.createElement("div");
-    partnerItem.className = "partner-item";
+    const partnerItem = this.createElement("div", "partner-item");
     partnerItem.setAttribute("role", "listitem");
 
-    const partnerName = document.createElement("div");
-    partnerName.className = "partner-name";
-    partnerName.textContent = member.person?.name || "Nome não informado";
+    partnerItem.appendChild(this.createElement("div", "partner-name", member.person?.name || "Nome não informado"));
+    partnerItem.appendChild(this.createElement("div", "partner-role", member.role?.text || "Cargo não informado"));
 
-    const partnerRole = document.createElement("div");
-    partnerRole.className = "partner-document";
-    partnerRole.textContent = `Cargo: ${member.role?.text || "Não informado"}`;
-
-    const partnerSince = document.createElement("div");
-    partnerSince.className = "partner-qualification";
-    partnerSince.textContent = `Desde: ${Formatters.date(member.since) || "Data não informada"}`;
-
-    const partnerAge = document.createElement("div");
-    partnerAge.className = "partner-qualification";
-    partnerAge.textContent = `Faixa Etária: ${member.person?.age || "Não informada"}`;
-
-    partnerItem.appendChild(partnerName);
-    partnerItem.appendChild(partnerRole);
-    partnerItem.appendChild(partnerSince);
-    partnerItem.appendChild(partnerAge);
+    const details = [];
+    if (member.since) details.push(`Desde ${Formatters.date(member.since)}`);
+    if (member.person?.age) details.push(member.person.age);
+    if (details.length > 0) {
+      partnerItem.appendChild(this.createElement("div", "partner-qualification", details.join(" · ")));
+    }
 
     return partnerItem;
   }
+
+  // =============================================
+  // DADOS COMPLETOS
+  // =============================================
 
   displayCompleteData(data) {
     this.elements.completeData.innerHTML = "";
@@ -1246,8 +1440,7 @@ class UIManager {
       this.createAddressSection(data),
       this.createContactSection(data),
       this.createActivitiesSection(data),
-      this.createRegistrationsSection(data),
-      this.createPartnersSection(data)
+      this.createRegistrationsSection(data)
     ];
 
     sections.forEach(section => {
@@ -1263,14 +1456,14 @@ class UIManager {
 
   createBasicInfoSection(data) {
     const fields = [
-      { label: "CNPJ", value: Formatters.CNPJ(data.taxId) },
-      { label: "Razão Social", value: data.company?.name },
-      { label: "Nome Fantasia", value: data.alias },
+      { label: "CNPJ", value: Formatters.CNPJ(data.taxId), copy: true },
+      { label: "Razão Social", value: data.company?.name, copy: true },
+      { label: "Nome Fantasia", value: data.alias, copy: true },
       { label: "Data de Abertura", value: Formatters.date(data.founded) },
-      { label: "Data da Última Atualização", value: Formatters.dateTime(data.updated) },
       { label: "Situação Cadastral", value: data.status?.text },
       { label: "Data da Situação", value: Formatters.date(data.statusDate) },
-      { label: "Matriz/Filial", value: data.head ? "Matriz" : "Filial" }
+      { label: "Matriz/Filial", value: data.head ? "Matriz" : "Filial" },
+      { label: "Última Atualização", value: Formatters.date(data.updated) }
     ];
 
     return this.createSection("Informações Básicas", fields);
@@ -1307,26 +1500,37 @@ class UIManager {
     if (data.company?.simei?.optant) {
       regimes.push(`MEI desde ${Formatters.date(data.company.simei.since)}`);
     }
-    if (regimes.length > 0) {
-      fields.push({ label: "Regimes Especiais", value: regimes });
-    }
+    fields.push({
+      label: "Regimes Especiais",
+      value: regimes.length > 0 ? regimes : "Não optante pelo Simples/MEI"
+    });
 
-    return fields.length > 0 ? this.createSection("Informações da Empresa", fields) : null;
+    return this.createSection("Informações da Empresa", fields);
   }
 
   createAddressSection(data) {
     if (!data.address) return null;
 
+    const address = data.address;
+    const fullAddress = [
+      [address.street, address.number].filter(Boolean).join(", "),
+      address.details,
+      address.district,
+      [address.city, address.state].filter(Boolean).join("/"),
+      address.zip ? `CEP ${Formatters.CEP(address.zip)}` : null
+    ].filter(Boolean).join(" - ");
+
     const fields = [
-      { label: "Logradouro", value: data.address.street },
-      { label: "Número", value: data.address.number },
-      { label: "Complemento", value: data.address.details },
-      { label: "Bairro", value: data.address.district },
-      { label: "Cidade", value: data.address.city },
-      { label: "Estado", value: data.address.state },
-      { label: "CEP", value: Formatters.CEP(data.address.zip) },
-      { label: "País", value: Formatters.country(data.address.country) },
-      { label: "Código Município", value: data.address.municipality }
+      { label: "Endereço Completo", value: fullAddress, copy: true },
+      { label: "Logradouro", value: address.street },
+      { label: "Número", value: address.number },
+      { label: "Complemento", value: address.details },
+      { label: "Bairro", value: address.district },
+      { label: "Cidade", value: address.city },
+      { label: "Estado", value: address.state },
+      { label: "CEP", value: Formatters.CEP(address.zip), copy: true },
+      { label: "País", value: Formatters.country(address.country) },
+      { label: "Código Município (IBGE)", value: address.municipality, copy: true }
     ].filter(field => field.value);
 
     return fields.length > 0 ? this.createSection("Endereço", fields) : null;
@@ -1336,24 +1540,33 @@ class UIManager {
     const fields = [];
 
     if (data.phones && data.phones.length > 0) {
-      const phones = data.phones.map(phone => {
-        const tipo = phone.type === "LANDLINE" ? "Fixo" : "Celular";
-        return `${tipo}: ${phone.area && phone.number ? 
-          Formatters.phone(`${phone.area}${phone.number}`) : 
-          phone.number}`;
-      }).filter(phone => !phone.includes("undefined"));
-      
+      const phones = data.phones
+        .filter(phone => phone.number)
+        .map(phone => {
+          const number = phone.area ? Formatters.phone(`${phone.area}${phone.number}`) : phone.number;
+          return { number, text: `${number} (${phone.type === "MOBILE" ? "Celular" : "Fixo"})` };
+        });
+
       if (phones.length > 0) {
-        fields.push({ label: "Telefones", value: phones });
+        fields.push({
+          label: "Telefones",
+          value: phones.map(phone => phone.text),
+          copy: true,
+          copyValue: phones.map(phone => phone.number).join("\n")
+        });
       }
     }
 
     if (data.emails && data.emails.length > 0) {
-      const emails = data.emails.map(email => {
-        const tipo = email.ownership === "CORPORATE" ? "Corporativo" : "Outro";
-        return `${tipo}: ${email.address}`;
-      });
-      fields.push({ label: "E-mails", value: emails });
+      const emails = data.emails.map(email => email.address).filter(Boolean);
+      if (emails.length > 0) {
+        fields.push({
+          label: "E-mails",
+          value: emails.map(email => email.toLowerCase()),
+          copy: true,
+          copyValue: emails.map(email => email.toLowerCase()).join("\n")
+        });
+      }
     }
 
     return fields.length > 0 ? this.createSection("Contatos", fields) : null;
@@ -1365,18 +1578,20 @@ class UIManager {
     if (data.mainActivity) {
       fields.push({
         label: "CNAE Principal",
-        value: `${data.mainActivity.id} - ${data.mainActivity.text}`
+        value: `${Formatters.cnae(data.mainActivity.id)} - ${data.mainActivity.text}`
       });
     }
 
     if (data.sideActivities && data.sideActivities.length > 0) {
       const secondaryActivities = data.sideActivities.map(
-        activity => `${activity.id} - ${activity.text}`
+        activity => `${Formatters.cnae(activity.id)} - ${activity.text}`
       );
-      fields.push({ label: "CNAEs Secundários", value: secondaryActivities });
+      fields.push({ label: `CNAEs Secundários (${secondaryActivities.length})`, value: secondaryActivities });
     }
 
-    return fields.length > 0 ? this.createSection("Atividades Econômicas", fields) : null;
+    const section = fields.length > 0 ? this.createSection("Atividades Econômicas", fields) : null;
+    if (section) section.classList.add("info-section-wide");
+    return section;
   }
 
   createRegistrationsSection(data) {
@@ -1405,27 +1620,16 @@ class UIManager {
       }
     }
 
-    return fields.length > 0 ? this.createSection("Registros e Inscrições", fields) : null;
-  }
-
-  createPartnersSection(data) {
-    if (!data.company?.members || data.company.members.length === 0) return null;
-
-    const socios = data.company.members.map(member => {
-      const since = member.since ? ` desde ${Formatters.date(member.since)}` : "";
-      return `${member.person?.name} - ${member.role?.text}${since}`;
-    });
-
-    return this.createSection("Sócios e Administradores", [
-      { label: "Lista Completa", value: socios }
-    ]);
+    const section = fields.length > 0 ? this.createSection("Registros e Inscrições", fields) : null;
+    if (section) section.classList.add("info-section-wide");
+    return section;
   }
 
   createSection(title, fields) {
-    const validFields = fields.filter(field => 
-      field.value !== undefined && 
-      field.value !== null && 
-      field.value !== "" && 
+    const validFields = fields.filter(field =>
+      field.value !== undefined &&
+      field.value !== null &&
+      field.value !== "" &&
       field.value !== "Não informado" &&
       !(Array.isArray(field.value) && field.value.length === 0)
     );
@@ -1441,14 +1645,14 @@ class UIManager {
     section.appendChild(sectionTitle);
 
     validFields.forEach(field => {
-      const item = this.createInfoItem(field.label, field.value);
+      const item = this.createInfoItem(field);
       if (item) section.appendChild(item);
     });
 
     return section;
   }
 
-  createInfoItem(label, value) {
+  createInfoItem({ label, value, copy = false, copyValue }) {
     const item = document.createElement("div");
     item.className = "info-item";
 
@@ -1460,13 +1664,23 @@ class UIManager {
     valueSpan.className = "value";
 
     if (Array.isArray(value)) {
-      valueSpan.innerHTML = value.map(item => `• ${this.escapeHtml(item)}`).join("<br>");
+      const list = document.createElement("ul");
+      list.className = "value-list";
+      value.forEach(text => list.appendChild(this.createElement("li", null, text)));
+      valueSpan.appendChild(list);
     } else {
       valueSpan.textContent = String(value);
     }
 
     item.appendChild(labelSpan);
     item.appendChild(valueSpan);
+
+    if (copy) {
+      item.classList.add("has-copy");
+      const text = copyValue ?? (Array.isArray(value) ? value.join("\n") : String(value));
+      item.appendChild(this.createCopyButton(text, label.toLowerCase()));
+    }
+
     return item;
   }
 
@@ -1491,6 +1705,7 @@ class UIManager {
   }
 
   showLoading() {
+    this.elements.recentSearches.classList.add("hidden");
     this.elements.loading.classList.remove("hidden");
     this.elements.loading.setAttribute("aria-busy", "true");
   }
@@ -1569,16 +1784,14 @@ class UIManager {
   toggleTheme() {
     const body = document.body;
     const isDarkMode = body.classList.contains("dark-mode");
-    const themeIcon = this.elements.themeToggle.querySelector(".theme-icon");
 
+    // Ícone sol/lua é alternado via CSS conforme a classe dark-mode
     if (isDarkMode) {
       body.classList.remove("dark-mode");
-      themeIcon.textContent = "🌙";
       appState.setTheme("light");
       Telemetry.trackEvent('theme_changed', { theme: 'light' });
     } else {
       body.classList.add("dark-mode");
-      themeIcon.textContent = "☀️";
       appState.setTheme("dark");
       Telemetry.trackEvent('theme_changed', { theme: 'dark' });
     }
@@ -1722,16 +1935,7 @@ function initializeApp() {
 
 function loadSavedTheme() {
   const savedTheme = localStorage.getItem("theme");
-  const body = document.body;
-  const themeIcon = document.querySelector(".theme-icon");
-
-  if (savedTheme === "light") {
-    body.classList.remove("dark-mode");
-    themeIcon.textContent = "🌙";
-  } else {
-    body.classList.add("dark-mode");
-    themeIcon.textContent = "☀️";
-  }
+  document.body.classList.toggle("dark-mode", savedTheme !== "light");
 }
 
 function setupServiceWorker() {

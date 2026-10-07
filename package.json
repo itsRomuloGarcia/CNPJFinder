@@ -1,6 +1,6 @@
 {
   "name": "consulta-cnpj",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Sistema de consulta de CNPJ com interface moderna e acessível",
   "type": "module",
   "author": "Romulo Garcia",

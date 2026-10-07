@@ -263,7 +263,8 @@ class DataMapper {
         text: estabelecimento.situacao_cadastral || null,
       },
       statusDate: estabelecimento.data_situacao_cadastral,
-      head: estabelecimento.tipo === 'MATRIZ',
+      // A API devolve "Matriz"/"Filial"
+      head: String(estabelecimento.tipo || '').toUpperCase() === 'MATRIZ',
 
       company: {
         name: apiData.razao_social || null,
